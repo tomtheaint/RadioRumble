@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/*.db
+*.log
+.env
+.DS_Store
+data/radiorumble.db
+data/radiorumble.db-shm
+data/radiorumble.db-wal
+tsconfig.tsbuildinfo

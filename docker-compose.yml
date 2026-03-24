@@ -1,0 +1,14 @@
+services:
+  radiorumble:
+    image: ghcr.io/atvriders/radiorumble:latest
+    ports:
+      - "7373:7373"
+      - "2237:2237/udp"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=7373
+      - UDP_PORT=2237
+      - DB_PATH=/app/data/radiorumble.db
+      - NODE_ENV=production
+    restart: unless-stopped
