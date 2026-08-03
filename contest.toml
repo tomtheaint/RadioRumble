@@ -1,0 +1,77 @@
+#  Radio Rumble — contest definition
+#
+#  Everything that decides a score lives here. Adding a school means adding a
+#  [[teams]] block; it never means editing Python.
+
+[contest]
+name = "Radio Rumble"
+
+#  The clock. Both are UTC. Leave them commented out and every QSO in the log
+#  counts, which is what you want while testing — the shipped mock log would
+#  otherwise fall outside any window you picked today.
+#
+#  Set them for the real event. A collegiate rumble wants to be short enough
+#  to watch end to end: two hours is a long enough run for band changes to
+#  matter and short enough that nobody drifts away.
+#
+# start = 2026-09-12T18:00:00Z
+# end   = 2026-09-12T20:00:00Z
+
+#  Where the QSOs come from. Point this at the ADIF your logger writes, or at
+#  the transcript rec.py produces — both parse. WSJT-X writes wsjtx_log.adi in
+#  its log directory; N1MM and friends can export continuously to ADIF.
+log_file = "mock_contest_log.txt"
+
+#  Bands and modes that count. An empty list means "anything".
+bands = ["80m", "40m", "20m", "15m", "10m"]
+modes = ["FT8", "FT4"]
+
+#  Points per contact. Kept at one so the multiplier is what separates teams:
+#  everybody can grind QSOs, but only a team that moves around collects grids.
+qso_points = 1
+
+#  What counts as working the same station twice.
+#    "band"       once per band  (default — rewards changing bands)
+#    "band-mode"  once per band and mode  (FT8 and FT4 on 20m are separate)
+#    "contest"    once, full stop
+dupe_scope = "band"
+
+
+#  ---------------------------------------------------------------------------
+#  Teams. `callsigns` lists the station callsigns your operators log under —
+#  the <station_callsign> field, not the stations they work. A QSO logged by a
+#  callsign that appears on no roster is ignored, which is what keeps the rest
+#  of the world out of a collegiate scoreboard.
+#
+#  Colours are the school's, and they are used for the bars on the scoreboard.
+#  ---------------------------------------------------------------------------
+
+[[teams]]
+name = "Kansas State University"
+abbr = "KSU"
+color = "#512888"
+callsigns = ["KE0VUM"]
+
+[[teams]]
+name = "University of Kansas"
+abbr = "KU"
+color = "#0051BA"
+callsigns = ["KD2FMW"]
+
+[[teams]]
+name = "University of Nebraska"
+abbr = "NEB"
+color = "#E41C38"
+callsigns = ["N0CALL"]
+
+[[teams]]
+name = "Iowa State University"
+abbr = "ISU"
+color = "#C8102E"
+callsigns = ["VA3OFF"]
+
+[[teams]]
+name = "Oklahoma State University"
+abbr = "OSU"
+color = "#FF7300"
+callsigns = ["W1XYZ"]

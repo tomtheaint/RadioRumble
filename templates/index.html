@@ -1,46 +1,311 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Radio Rumble Contest Live Scoreboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Live Scoreboard</title>
 <style>
+  /* Everything is inline on purpose. The scoreboard gets opened through
+     whatever proxy is to hand at an event — a tunnel, a path-prefixing
+     dev proxy, someone's phone hotspot — and a page with no external
+     requests cannot lose its stylesheet to a rewritten path. */
+  :root {
+    --bg: #0b0e14;
+    --panel: #141922;
+    --panel-2: #1b212c;
+    --line: #263042;
+    --text: #e8edf5;
+    --muted: #8b97ad;
+    --dim: #5d6980;
+    --accent: #4da3ff;
+    --live: #3fd07f;
+  }
+  * { box-sizing: border-box; }
   body {
-    background: #fff;
-    color: #512888;
-    font-family: monospace;
-    margin: 2em;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   }
-  table {
-    border-collapse: collapse;
-    width: 400px;
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 22px;
   }
-  th, td {
-    border-bottom: 1px solid #512888;
-    padding: 6px 12px;
-    text-align: left;
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .pill {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
   }
-  th { color: #000; }
+  .pill.running { color: var(--live); border-color: rgba(63,208,127,.45); background: rgba(63,208,127,.10); }
+  .pill.pending { color: #ffc857; border-color: rgba(255,200,87,.45); background: rgba(255,200,87,.10); }
+  .pill.finished { color: var(--dim); }
+  .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--live); margin-right: 6px; vertical-align: middle;
+  }
+  .running .dot { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  .clock {
+    margin-left: auto; text-align: right;
+  }
+  .clock .value {
+    font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em; line-height: 1.1;
+  }
+  .clock .label { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--dim); }
+
+  /* ---------- layout ---------- */
+  .cols { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+  @media (max-width: 880px) { .cols { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .panel h2 {
+    margin: 0; padding: 12px 16px; font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+
+  /* ---------- standings ---------- */
+  .team {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    gap: 14px; align-items: center;
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    position: relative;
+  }
+  .team:last-child { border-bottom: 0; }
+  .team .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+  .rank { font-size: 19px; font-weight: 700; color: var(--dim); text-align: center; font-variant-numeric: tabular-nums; }
+  .team.leader .rank { color: var(--text); }
+  .who .abbr { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+  .who .full { font-size: 12px; color: var(--muted); }
+  .who .ops { font-size: 11px; color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .nums { display: flex; gap: 18px; text-align: right; }
+  .nums div { min-width: 46px; }
+  .nums .n { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .nums .k { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); }
+  .nums .score .n { font-size: 24px; }
+  @media (max-width: 560px) {
+    .team { grid-template-columns: 26px 1fr; }
+    .nums { grid-column: 1 / -1; justify-content: flex-start; gap: 22px; }
+  }
+
+  /* ---------- recent ---------- */
+  .qso {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 8px 14px; border-bottom: 1px solid var(--line);
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .qso:last-child { border-bottom: 0; }
+  .qso .tag {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    color: #fff; flex: none; letter-spacing: .04em;
+  }
+  .qso .call { font-weight: 600; }
+  .qso .meta { margin-left: auto; color: var(--dim); font-size: 11px; }
+
+  .empty { padding: 22px 16px; color: var(--dim); font-size: 13px; }
+  .foot {
+    margin-top: 18px; font-size: 12px; color: var(--dim);
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+  }
+  .foot b { color: var(--muted); font-weight: 600; }
+  .offline { color: #ff8080; }
 </style>
 </head>
 <body>
-<h2>Radio Rumble Live Scoreboard</h2>
-<table id="scoreboard">
-  <thead><tr><th>Station</th><th>Contacts</th></tr></thead>
-  <tbody></tbody>
-</table>
+<div class="wrap">
+
+  <header>
+    <h1 id="title">Radio Rumble</h1>
+    <span class="pill" id="status"><span class="dot"></span><span id="status-text">connecting</span></span>
+    <div class="clock">
+      <div class="value" id="clock">--:--</div>
+      <div class="label" id="clock-label">time remaining</div>
+    </div>
+  </header>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Standings</h2>
+      <div id="standings"><div class="empty">Waiting for the first contact…</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Latest contacts</h2>
+      <div id="recent"><div class="empty">Nothing logged yet.</div></div>
+    </div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
 
 <script>
-const ws = new WebSocket("ws://" + location.host + "/ws");
-ws.onmessage = function(event) {
-  const data = JSON.parse(event.data);
-  const tbody = document.querySelector("#scoreboard tbody");
-  tbody.innerHTML = "";
-  data.forEach(([station, count], idx) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td>${idx+1}. ${station}</td><td>${count}</td>`;
-    tbody.appendChild(row);
-  });
-};
+(function () {
+  "use strict";
+
+  // Build the websocket URL from wherever this page was actually served.
+  // Opened directly that is "/ws"; behind a path-prefixing proxy such as
+  // code-server's /proxy/7373/ it has to be "/proxy/7373/ws", and hardcoding
+  // either one breaks the other.
+  function socketURL() {
+    var scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    var base = location.pathname.replace(/\/+$/, "");
+    return scheme + "//" + location.host + base + "/ws";
+  }
+  function apiURL() {
+    var base = location.pathname.replace(/\/+$/, "");
+    return base + "/api/scoreboard";
+  }
+
+  var state = null;        // last snapshot received
+  var clockBase = null;    // {remaining, at} for a client-side countdown
+  var retry = 1000;
+
+  function pad(n) { return String(n).padStart(2, "0"); }
+
+  function renderClock() {
+    var el = document.getElementById("clock");
+    var label = document.getElementById("clock-label");
+    if (!state) { return; }
+    var c = state.contest;
+
+    if (c.seconds_remaining === null || c.seconds_remaining === undefined) {
+      el.textContent = "open";
+      label.textContent = "no time limit set";
+      return;
+    }
+    // Tick locally between pushes so the clock doesn't freeze between QSOs.
+    var elapsed = clockBase ? (Date.now() - clockBase.at) / 1000 : 0;
+    var left = Math.max(0, Math.round(clockBase.remaining - elapsed));
+    var h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60), s = left % 60;
+    el.textContent = h > 0 ? h + ":" + pad(m) + ":" + pad(s) : pad(m) + ":" + pad(s);
+    label.textContent = c.status === "pending" ? "until start"
+                      : c.status === "finished" ? "contest over"
+                      : "time remaining";
+  }
+
+  function renderStatus(connected) {
+    var pill = document.getElementById("status");
+    var text = document.getElementById("status-text");
+    if (!connected) {
+      pill.className = "pill";
+      text.textContent = "reconnecting";
+      text.className = "offline";
+      return;
+    }
+    text.className = "";
+    var s = state ? state.contest.status : "running";
+    pill.className = "pill " + s;
+    text.textContent = s === "running" ? "live" : s;
+  }
+
+  function renderStandings() {
+    var host = document.getElementById("standings");
+    var rows = state.standings || [];
+    if (!rows.length) {
+      host.innerHTML = '<div class="empty">No teams configured — add a [[teams]] block to contest.toml.</div>';
+      return;
+    }
+    host.innerHTML = rows.map(function (t, i) {
+      var ops = (t.operators || []).map(function (o) { return o.call + " " + o.qsos; }).join(" · ");
+      return '<div class="team' + (i === 0 && t.score > 0 ? " leader" : "") + '">' +
+        '<div class="bar" style="background:' + t.color + '"></div>' +
+        '<div class="rank">' + t.position + '</div>' +
+        '<div class="who">' +
+          '<div class="abbr">' + t.abbr + '</div>' +
+          '<div class="full">' + t.name + '</div>' +
+          (ops ? '<div class="ops">' + ops + '</div>' : '') +
+        '</div>' +
+        '<div class="nums">' +
+          '<div><div class="n">' + t.qsos + '</div><div class="k">QSOs</div></div>' +
+          '<div><div class="n">' + t.multipliers + '</div><div class="k">grids</div></div>' +
+          '<div><div class="n">' + t.states + '</div><div class="k">states</div></div>' +
+          '<div class="score"><div class="n">' + t.score.toLocaleString() + '</div><div class="k">score</div></div>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function renderRecent() {
+    var host = document.getElementById("recent");
+    var rows = state.recent || [];
+    if (!rows.length) {
+      host.innerHTML = '<div class="empty">Nothing logged yet.</div>';
+      return;
+    }
+    host.innerHTML = rows.map(function (q) {
+      var time = q.when ? q.when.slice(11, 16) + "z" : "";
+      return '<div class="qso">' +
+        '<span class="tag" style="background:' + q.color + '">' + q.team + '</span>' +
+        '<span class="call">' + q.call + '</span>' +
+        '<span style="color:var(--muted)">' + (q.grid || "") + '</span>' +
+        '<span class="meta">' + q.band + " " + q.mode + " " + time + '</span>' +
+      '</div>';
+    }).join("");
+  }
+
+  function renderFoot() {
+    var t = state.totals || {};
+    var c = state.contest || {};
+    var bits = [
+      "<span><b>" + (t.qsos_scored || 0) + "</b> scoring contacts of <b>" + (t.qsos_seen || 0) + "</b> read</span>"
+    ];
+    var rejected = t.rejected || {};
+    Object.keys(rejected).forEach(function (reason) {
+      bits.push("<span><b>" + rejected[reason] + "</b> " + reason + "</span>");
+    });
+    if (c.bands && c.bands.length) { bits.push("<span>bands: " + c.bands.join(", ") + "</span>"); }
+    if (c.modes && c.modes.length) { bits.push("<span>modes: " + c.modes.join(", ") + "</span>"); }
+    document.getElementById("foot").innerHTML = bits.join("");
+  }
+
+  function apply(snapshot) {
+    state = snapshot;
+    clockBase = { remaining: snapshot.contest.seconds_remaining, at: Date.now() };
+    document.getElementById("title").textContent = snapshot.contest.name;
+    document.title = snapshot.contest.name + " — Live Scoreboard";
+    renderStatus(true);
+    renderStandings();
+    renderRecent();
+    renderFoot();
+    renderClock();
+  }
+
+  function connect() {
+    var ws;
+    try {
+      ws = new WebSocket(socketURL());
+    } catch (e) {
+      return poll();
+    }
+    ws.onopen = function () { retry = 1000; };
+    ws.onmessage = function (ev) { apply(JSON.parse(ev.data)); };
+    ws.onclose = function () {
+      renderStatus(false);
+      // Back off to 15s so a scoreboard left up overnight doesn't hammer a
+      // server that isn't coming back.
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 15000);
+    };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+
+  // Fallback for anywhere websockets don't survive the network path.
+  function poll() {
+    fetch(apiURL())
+      .then(function (r) { return r.json(); })
+      .then(apply)
+      .catch(function () { renderStatus(false); })
+      .finally(function () { setTimeout(poll, 5000); });
+  }
+
+  setInterval(renderClock, 1000);
+  connect();
+})();
 </script>
 </body>
 </html>

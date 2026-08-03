@@ -1,120 +1,124 @@
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+#!/usr/bin/env python3
+"""Radio Rumble — live contest scoreboard.
 
-from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from collections import Counter
-import re
+    uvicorn app:app --host 0.0.0.0 --port 7373 --reload
+
+Serves the scoreboard at / and pushes updates over /ws whenever the log file
+grows. The contest itself is defined in contest.toml; nothing here knows the
+name of a school or a band.
+"""
+from __future__ import annotations
+
 import asyncio
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from pathlib import Path
 import json
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-LOG_FILE = Path("mock_contest_log.txt")  # change to your live path
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from radiorumble import config
+from radiorumble.ingest import ContestIngest
+from radiorumble.scoring import Scoreboard
 
-clients = set()
-scores = Counter()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("radiorumble")
 
-# --- regex: station_callsign
-STATION_RE = re.compile(r"<station_callsign:\d+>\s*([A-Z0-9/]+)", re.IGNORECASE)
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE = BASE_DIR / "templates" / "index.html"
+
+contest = config.load()
+ingest = ContestIngest(Scoreboard(contest))
+
+# Live websocket connections. Only the event loop touches this set.
+clients: set[WebSocket] = set()
 
 
-# Serve basic HTML UI
-@app.get("/")
-async def root():
-    with open("templates/index.html") as f:
-        return HTMLResponse(f.read())
+async def _broadcast() -> None:
+    """Push the current scoreboard to everyone still listening."""
+    if not clients:
+        return
+    payload = json.dumps(ingest.snapshot())
+    for ws in tuple(clients):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            clients.discard(ws)
+
+
+def _on_log_change() -> None:
+    """Called from the watchdog thread, so hop back onto the event loop.
+
+    ``run_coroutine_threadsafe`` is the whole point here: touching the
+    websockets directly from the observer thread would be a data race on the
+    loop's internals rather than a visible error.
+    """
+    loop = getattr(_on_log_change, "loop", None)
+    if loop is not None:
+        asyncio.run_coroutine_threadsafe(_broadcast(), loop)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _on_log_change.loop = asyncio.get_running_loop()
+    ingest.on_change = _on_log_change
+    ingest.start()
+    snapshot = ingest.snapshot()
+    log.info(
+        "%s: %d teams, %d QSOs scored, status %s",
+        contest.name,
+        len(contest.teams),
+        snapshot["totals"]["qsos_scored"],
+        contest.status,
+    )
+    try:
+        yield
+    finally:
+        ingest.stop()
+
+
+app = FastAPI(title="Radio Rumble", lifespan=lifespan)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> HTMLResponse:
+    return HTMLResponse(TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.get("/api/scoreboard")
+async def scoreboard() -> JSONResponse:
+    """The same payload the websocket pushes, for anything that would rather poll."""
+    return JSONResponse(ingest.snapshot())
+
+
+@app.get("/api/health")
+async def health() -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "ok",
+            "contest": contest.name,
+            "state": contest.status,
+            "log_file": str(contest.log_file),
+            "log_present": contest.log_file.exists(),
+        }
+    )
 
 
 @app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket):
+async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     clients.add(websocket)
     try:
-        await websocket.send_text(json.dumps(scores.most_common()))
+        await websocket.send_text(json.dumps(ingest.snapshot()))
         while True:
-            await asyncio.sleep(1)
-    except Exception:
+            # The client says nothing; this is here to notice when it leaves.
+            # Without a read, a closed browser tab would sit in `clients`
+            # until the next broadcast failed to write to it.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
         pass
+    except Exception:
+        log.debug("websocket dropped", exc_info=True)
     finally:
-        clients.remove(websocket)
-
-
-async def broadcast_scores():
-    data = json.dumps(scores.most_common())
-    for ws in tuple(clients):
-        try:
-            await ws.send_text(data)
-        except Exception:
-            clients.remove(ws)
-
-
-# --- process new data chunk ---
-def process_text_chunk(text: str):
-    """Extract all stations from block and update scores"""
-    # Extract only ADIF-like lines
-    adif_lines = [
-        line for line in text.splitlines()
-        if line.strip().startswith("<") or "<eor>" in line.lower()
-    ]
-    joined = "\n".join(adif_lines).upper()
-    matches = STATION_RE.findall(joined)
-    if matches:
-        for m in matches:
-            scores[m] += 1
-
-
-# --- one-time file ingest on startup ---
-def load_existing_log():
-    """Load all historical data from file."""
-    if not LOG_FILE.exists():
-        print(f"⚠️  Log file not found: {LOG_FILE}")
-        return
-    try:
-        with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        process_text_chunk(content)
-        print(f"✅ Loaded {sum(scores.values())} total QSOs from log.")
-    except Exception as e:
-        print(f"Error loading log: {e}")
-
-
-# --- event handler for future changes ---
-class LogUpdateHandler(FileSystemEventHandler):
-    def __init__(self, loop):
-        self.loop = loop
-
-    def on_modified(self, event):
-        if event.is_directory or not LOG_FILE.samefile(event.src_path):
-            return
-        try:
-            with open(LOG_FILE, "rb") as f:
-                lines = f.readlines()[-100:]
-            chunk = b"".join(lines).decode(errors="ignore")
-        except Exception:
-            return
-
-        process_text_chunk(chunk)
-        asyncio.run_coroutine_threadsafe(broadcast_scores(), self.loop)
-
-
-# --- LIFECYCLE: startup ---
-@app.on_event("startup")
-async def startup_event():
-    load_existing_log()  # read all existing QSOs once
-    loop = asyncio.get_running_loop()
-    observer = Observer()
-    observer.schedule(LogUpdateHandler(loop), ".", recursive=False)
-    observer.start()
-    print("📡 Scoreboard watcher started.")
+        clients.discard(websocket)

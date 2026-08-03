@@ -1,0 +1,8 @@
+# Runtime dependencies.
+#
+# tomllib (contest.toml) is in the standard library from Python 3.11, so the
+# contest definition costs nothing to read.
+
+fastapi>=0.110
+uvicorn[standard]>=0.27      # [standard] brings the websocket implementation
+watchdog>=4.0                # notices the log file growing

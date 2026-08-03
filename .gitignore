@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Raw UDP capture from rec.py — machine-specific and large.
+wsjtx_log.txt
+mock_raw_listener_output.txt
+.pytest_cache/
