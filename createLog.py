@@ -197,6 +197,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=None, help="make the output repeatable")
     ap.add_argument("--output", default=None,
                     help="defaults to the log_file named in contest.toml")
+    ap.add_argument("--split", metavar="DIR", default=None,
+                    help="write one log per entrant into DIR, the way a real "
+                         "event receives them — this is what makes cross-checking "
+                         "possible, since a contact can only be confirmed against "
+                         "the other operator's own log")
     args = ap.parse_args()
 
     contest = config.load()
@@ -207,6 +212,10 @@ def main() -> None:
         return run_live(contest, rng, out, args)
 
     window = contest_window(contest, args.minutes)
+
+    if args.split:
+        return write_split(contest, rng, window, args)
+
     records = build(contest, args.qsos, rng, window)
     with open(out, "w", encoding="utf-8") as fh:
         for record in records:
@@ -216,6 +225,66 @@ def main() -> None:
     print(f"Window: {window[0]:%Y-%m-%d %H:%M} - {window[1]:%H:%M} UTC")
     print("Teams:  " + ", ".join(f"{t.abbr} ({', '.join(t.callsigns)})"
                                  for t in contest.teams if t.callsigns))
+
+
+def write_split(contest, rng, window, args) -> None:
+    """One log file per entrant, the way a real event receives them.
+
+    Team-to-team contacts are written into *both* logs so most of them confirm,
+    with a deliberate handful left in only one log. Those are the interesting
+    ones: a contact the other operator's log does not contain is what "not in
+    log" means, and it is the only signal in a contest that distinguishes a
+    mistake — or an invention — from an ordinary unconfirmed contact.
+    """
+    import pathlib
+
+    directory = pathlib.Path(args.split)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    teams = [t for t in contest.teams if t.callsigns]
+    bands = sorted(contest.bands) or ["20m"]
+    modes = sorted(contest.modes) or ["FT8"]
+    start, end = window
+    span = max(1, int((end - start).total_seconds()))
+    logs: dict[str, list[str]] = {t.abbr: [] for t in teams}
+
+    # Each entrant's own contacts with the rest of the world.
+    per_team = max(1, args.qsos // max(1, len(teams)))
+    for team in teams:
+        records = build(contest, per_team, rng, window)
+        station = team.callsigns[0]
+        logs[team.abbr] = [r for r in records if f">{station} " in r]
+
+    # Contacts between entrants, which are the ones that can be confirmed.
+    confirmed = nil = 0
+    for _ in range(max(6, args.qsos // 12)):
+        a, b = rng.sample(teams, 2)
+        when = start + timedelta(seconds=rng.randint(0, span))
+        band, mode = rng.choice(bands), rng.choice(modes)
+        ca, cb = a.callsigns[0], b.callsigns[0]
+        ga = a.grid[:4] or "EM19"
+        gb = b.grid[:4] or "EN12"
+
+        logs[a.abbr].append(adif_record(rng, ca, cb, gb, band, mode, when, my_grid=ga))
+        if rng.random() < 0.85:
+            # The other end logs it too, a few seconds off, as clocks are.
+            other = when + timedelta(seconds=rng.randint(-40, 40))
+            logs[b.abbr].append(adif_record(rng, cb, ca, ga, band, mode, other, my_grid=gb))
+            confirmed += 1
+        else:
+            nil += 1
+
+    for team in teams:
+        records = logs[team.abbr]
+        rng.shuffle(records)
+        path = directory / f"{team.callsigns[0]}.adi"
+        path.write_text("\n".join(records) + "\n", encoding="utf-8")
+        print(f"  {path.name:14} {len(records):>4} contacts")
+
+    print(f"\nWrote {len(teams)} logs to {directory}")
+    print(f"  {confirmed} contacts between entrants appear in both logs (verified)")
+    print(f"  {nil} appear in only one (not in log)")
+    print(f'\nSet log_dir = "{directory.name}" in contest.toml to score them together.')
 
 
 def run_live(contest, rng, out, args) -> None:

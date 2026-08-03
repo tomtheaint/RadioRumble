@@ -15,22 +15,38 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import os
+import secrets
+
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from radiorumble import config
 from radiorumble.ingest import ContestIngest
-from radiorumble.scoring import Scoreboard
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("radiorumble")
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE = BASE_DIR / "templates" / "index.html"
+ADMIN_TEMPLATE = BASE_DIR / "templates" / "admin.html"
 
 contest = config.load()
-ingest = ContestIngest(Scoreboard(contest))
+ingest = ContestIngest(contest)
+
+# Voiding a contact changes somebody's score, so it is not something a
+# spectator gets to do. One shared token is the right weight for a two-hour
+# event: no accounts to create, and nothing to leave behind afterwards.
+# Generated if unset so the endpoints are never accidentally open.
+ADMIN_TOKEN = os.environ.get("RR_ADMIN_TOKEN") or secrets.token_urlsafe(16)
+ADMIN_TOKEN_GENERATED = "RR_ADMIN_TOKEN" not in os.environ
+
+
+def require_admin(x_admin_token: str = Header(default="")) -> None:
+    """Constant-time comparison, so the token can't be guessed a byte at a time."""
+    if not secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
+        raise HTTPException(status_code=403, detail="admin token required")
 
 # Live websocket connections. Only the event loop touches this set.
 clients: set[WebSocket] = set()
@@ -67,12 +83,17 @@ async def lifespan(app: FastAPI):
     ingest.start()
     snapshot = ingest.snapshot()
     log.info(
-        "%s: %d teams, %d QSOs scored, status %s",
+        "%s (%s, by %s): %d entries, %d contacts scored, status %s",
         contest.name,
+        contest.mode,
+        contest.compete_as,
         len(contest.teams),
         snapshot["totals"]["qsos_scored"],
         contest.status,
     )
+    if ADMIN_TOKEN_GENERATED:
+        log.info("admin token for this run: %s  (set RR_ADMIN_TOKEN to fix it)",
+                 ADMIN_TOKEN)
     try:
         yield
     finally:
@@ -105,10 +126,49 @@ async def health() -> JSONResponse:
             "status": "ok",
             "contest": contest.name,
             "state": contest.status,
+            "mode": contest.mode,
+            "compete_as": contest.compete_as,
+            "log_dir": str(contest.log_dir) if contest.log_dir else None,
             "log_file": str(contest.log_file),
             "log_present": contest.log_file.exists(),
+            "contacts_held": len(ingest.store.qsos),
+            "voided": len(ingest.store.voids),
         }
     )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page() -> HTMLResponse:
+    """The review screen. The page is public; every action on it is not."""
+    return HTMLResponse(ADMIN_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.get("/api/contacts", dependencies=[Depends(require_admin)])
+async def contacts(limit: int = 500, team: str = "", status: str = "") -> JSONResponse:
+    """Every contact an official might want to look at, newest first."""
+    return JSONResponse(
+        {
+            "contacts": ingest.contacts(limit=limit, team=team, status=status),
+            "teams": [{"abbr": t.abbr, "name": t.name, "color": t.color}
+                      for t in contest.teams],
+        }
+    )
+
+
+@app.post("/api/contacts/{uid}/void", dependencies=[Depends(require_admin)])
+async def void_contact(uid: str, reason: str = "") -> JSONResponse:
+    if ingest.store.find(uid) is None:
+        raise HTTPException(status_code=404, detail="no such contact")
+    changed = ingest.void(uid, reason)
+    await _broadcast()
+    return JSONResponse({"uid": uid, "voided": True, "changed": changed})
+
+
+@app.post("/api/contacts/{uid}/restore", dependencies=[Depends(require_admin)])
+async def restore_contact(uid: str) -> JSONResponse:
+    changed = ingest.restore(uid)
+    await _broadcast()
+    return JSONResponse({"uid": uid, "voided": False, "changed": changed})
 
 
 @app.websocket("/ws")

@@ -41,6 +41,25 @@ class Qso:
     rst_rcvd: str = ""
     raw: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
+    #: Which submitted log this came out of. Empty for a single merged file.
+    source: str = ""
+
+    @property
+    def uid(self) -> str:
+        """A stable identifier for one contact, used to void it by name.
+
+        Derived from the contact itself rather than from its position in a
+        file, because a log that is re-read after a rotation would otherwise
+        renumber everything and un-void whatever an admin had struck out.
+        """
+        import hashlib
+
+        parts = "|".join([
+            self.station, self.call, self.band, self.mode,
+            self.when.isoformat() if self.when else "",
+        ])
+        return hashlib.sha1(parts.encode()).hexdigest()[:12]
+
     @property
     def square(self) -> str:
         """The 4-character grid square, which is what counts as a multiplier.
@@ -100,12 +119,15 @@ def parse_fields(text: str) -> list[dict[str, str]]:
     return records
 
 
-def parse(text: str) -> list[Qso]:
+def parse(text: str, source: str = "") -> list[Qso]:
     """Parse text into Qso objects, skipping records without the essentials.
 
     A record with no ``call`` or no ``station_callsign`` cannot be scored or
     attributed to a team, so it is dropped here rather than becoming a
     half-populated row that fails somewhere less obvious.
+
+    ``source`` names the log the records came from, which is what makes it
+    possible to say later that a contact was confirmed by the other end.
     """
     qsos = []
     for rec in parse_fields(text):
@@ -125,6 +147,7 @@ def parse(text: str) -> list[Qso]:
                 freq=rec.get("freq", ""),
                 rst_sent=rec.get("rst_sent", ""),
                 rst_rcvd=rec.get("rst_rcvd", ""),
+                source=source,
                 raw=rec,
             )
         )

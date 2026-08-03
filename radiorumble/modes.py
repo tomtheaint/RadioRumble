@@ -229,10 +229,83 @@ class DxMode(Mode):
         return {"markers": list(board.markers)}
 
 
+class ScarcityMode(ConquestMode):
+    """Conquest, but the last states standing are the valuable ones.
+
+    Every state starts at ``base`` points. Each time one is claimed the
+    remaining unclaimed states are worth more, so the map gets harder to
+    ignore as it empties: Rhode Island at minute five is worth the same as
+    Texas, and at minute fifty it is worth several times as much.
+
+    Points are locked in at the moment of the claim. A state banked early
+    keeps its early price — the reward is for going and getting the awkward
+    ones while they are still awkward, not for having claimed anything at all.
+    """
+
+    key = "scarcity"
+    label = "Scarcity"
+    view = "usmap"
+
+    def __init__(self, settings=None) -> None:
+        super().__init__(settings)
+        # Scarcity only makes sense if a state stays claimed; under "most" a
+        # state could change hands and its price would be meaningless.
+        self.claim = "first"
+        self.base = int(self.settings.get("base_points", 10))
+        self.step = int(self.settings.get("step_points", 5))
+
+    def _resolve(self, state, team, when, board) -> None:
+        if state in board.owners:
+            return
+        remaining_before = self._total_states(board) - len(board.owners)
+        board.first_claim.setdefault(state, team.abbr)
+        board.owners[state] = team.abbr
+        # Price rises as the board empties. The last state is worth the most.
+        claimed = len(board.owners) - 1
+        board.state_value[state] = self.base + self.step * claimed
+        board.claim_log.append(
+            {
+                "state": state,
+                "team": team.abbr,
+                "value": board.state_value[state],
+                "remaining": remaining_before - 1,
+                "when": when.isoformat() if when else None,
+            }
+        )
+
+    @staticmethod
+    def _total_states(board) -> int:
+        return len({s for states in board.contest.grid_states.values() for s in states})
+
+    def score_for(self, score, board) -> int:
+        return sum(
+            board.state_value.get(state, self.base)
+            for state, owner in board.owners.items()
+            if owner == score.team.abbr
+        )
+
+    def snapshot_extras(self, board) -> dict:
+        extras = super().snapshot_extras(board)
+        total = self._total_states(board)
+        remaining = total - len(board.owners)
+        extras["map"]["values"] = dict(board.state_value)
+        extras["map"]["next_value"] = self.base + self.step * len(board.owners)
+        extras["map"]["remaining"] = remaining
+        extras["scarcity"] = {
+            "base": self.base,
+            "step": self.step,
+            "next_value": self.base + self.step * len(board.owners),
+            "remaining": remaining,
+            "recent_claims": board.claim_log[-12:][::-1],
+        }
+        return extras
+
+
 MODES: dict[str, type[Mode]] = {
     "classic": ClassicMode,
     "conquest": ConquestMode,
     "dx": DxMode,
+    "scarcity": ScarcityMode,
 }
 
 

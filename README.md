@@ -52,6 +52,20 @@ Who holds a state is set by `claim`:
 Contacts outside the US can't take territory, and are reported as *not in a US
 state* rather than dropped silently.
 
+### `scarcity` — the last states standing are the prizes
+
+Conquest, but every state claimed makes the remaining ones worth more. Rhode
+Island at minute five is worth the same as Texas; at minute fifty it is worth
+several times as much, because it is one of the few left.
+
+The price is locked in at the moment of the claim, so banking a state early
+keeps its early price. The reward is for going and getting the awkward ones
+*while they are still awkward* — which is the opposite of the incentive in
+plain conquest, where the cheap easy states are as good as any.
+
+States never change hands in this mode. A price agreed at the claim would mean
+nothing if the state could be taken afterwards.
+
 ### `dx` — reach, drawn on a globe
 
 Only contacts outside the United States count, and the multiplier is
@@ -124,6 +138,79 @@ Every rejection is counted and shown under the scoreboard. At a live event
 and an answer of *dupe on 20m* ends the conversation where a silent drop
 starts an argument.
 
+## Who is competing
+
+`compete_as = "team"` puts schools against each other. `compete_as = "operator"`
+splits every rostered callsign into its own entry — for a club running a
+contest among its own members, or an event thrown open to anyone with a
+licence. The machinery is identical; only the unit of competition changes.
+Operators keep their school named underneath, and get distinct colours so two
+dots on a map are two dots you can tell apart.
+
+Give each entrant a `grid` and their station is drawn on the map and the globe.
+That is worth doing: seeing your own dot next to the states you *haven't* taken
+is how a team decides which one to chase next.
+
+## Chasers
+
+Nobody scores without somebody to answer. The people who work the teams are
+what makes the event happen, so they get a leaderboard of their own — ranked by
+contacts, with the number of different schools reached as the tie-break, and a
+**sweep** flag for anyone who worked every one of them. If you are not
+competing, a sweep is the thing to chase.
+
+## Cross-checking, and voiding
+
+A contact is one operator's claim that a conversation happened. On its own it
+cannot be told apart from an invention. The only real evidence is the other
+operator's log saying the same thing.
+
+Point `log_dir` at a directory of submitted logs — one file per entrant — and
+every contact is cross-checked:
+
+| Status | Meaning |
+|---|---|
+| **verified** | the other operator's log has the reciprocal contact |
+| **NIL** | they submitted a log and this contact is **not** in it — the classic sign of a busted callsign or an invented contact |
+| **unmatched** | they never submitted a log, so there is nothing to check against |
+| **voided** | an official struck it out |
+
+**Only NIL is evidence of anything.** Most contacts at a collegiate event are
+with people who will never send a log in, and treating those as suspicious
+would punish a team for working exactly who the contest wants them to work. So
+unmatched contacts score normally, and the cross-check informs a human rather
+than silently rewriting anybody's total.
+
+Band has to agree between the two logs. Time is allowed to drift by
+`match_minutes` (3 by default) — clocks are not synchronised, and the two ends
+record different moments of an exchange that takes about a minute.
+
+### The review screen
+
+`/admin` lists every contact with its status, filterable by entrant and by
+status — *NIL only* is the useful one. Voiding removes a contact from every
+total it fed and survives a restart; it is reversible.
+
+Actions need `RR_ADMIN_TOKEN`:
+
+```bash
+RR_ADMIN_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))') \
+  uv run uvicorn app:app --host 0.0.0.0 --port 7373
+```
+
+If you don't set one, a token is generated per run and written to the server
+log at startup — so the endpoints are never accidentally open, but you also
+can't forget to set it and quietly end up with no protection.
+
+Generate a set of per-entrant logs to try this with:
+
+```bash
+python createLog.py --split logs
+```
+
+Most contacts between entrants land in both logs; a deliberate handful land in
+only one, so there is something for the NIL filter to find.
+
 ### Where the geography comes from
 
 [`grid.txt`](grid.txt) maps grid squares to states and is **generated**, not
@@ -183,12 +270,15 @@ contest.toml            the mode, the clock, the rules, the rosters
 radiorumble/
   adif.py               log text -> Qso records
   config.py             contest.toml -> Contest
-  scoring.py            Qso records -> per-team scores (mode-independent)
-  modes.py              what a contact is worth: classic, conquest, dx
+  scoring.py            Qso records -> per-entrant scores (mode-independent)
+  modes.py              what a contact is worth: classic, conquest, scarcity, dx
   maidenhead.py         grid square -> latitude and longitude
   dxcc.py               callsign prefix -> country and continent
-  ingest.py             watches the log, feeds scoring exactly once each
+  store.py              every contact held, plus the void list
+  verify.py             one log checked against another
+  ingest.py             watches the logs, reads each byte once
 templates/index.html    scoreboard, US map and globe in one page
+templates/admin.html    the review screen
 static/
   us-states.json        50 states + DC, Natural Earth
   world-land.json       world coastline, Natural Earth
@@ -215,9 +305,18 @@ built from `location.pathname` for the same reason, and falls back to polling
 | Path | Purpose |
 |---|---|
 | `/` | The scoreboard |
-| `/ws` | Websocket; pushes a full snapshot whenever the log grows |
+| `/ws` | Websocket; pushes a full snapshot whenever a log grows |
 | `/api/scoreboard` | The same snapshot over HTTP, for anything that would rather poll |
-| `/api/health` | Status, and whether the log file is actually there |
+| `/api/health` | Status, how many contacts are held, how many are voided |
+| `/admin` | The review screen |
+| `/api/contacts` | Every contact with its status. Needs the admin token |
+| `/api/contacts/{uid}/void` · `/restore` | Strike one out, or put it back |
+
+Reading is incremental — each byte of each log is parsed once — but what is
+*derived* from the contacts is rebuilt from scratch on every change. It has to
+be: cross-checking and voiding both reach backwards. A contact scored an hour
+ago becomes confirmed when the other operator finally submits, and one struck
+out has to leave every total it ever fed.
 
 ## Tests
 

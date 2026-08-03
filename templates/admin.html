@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Log review</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
+    --text:#e8edf5; --muted:#8b97ad; --dim:#5d6980; --live:#3fd07f; --bad:#ff8080;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 16px 60px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+           padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  h1 { font-size:20px; margin:0; }
+  a.back { margin-left:auto; color:#4da3ff; text-decoration:none; font-size:13px; }
+  a.back:hover { text-decoration:underline; }
+
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:16px; margin-bottom:18px; }
+  label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+          color:var(--dim); margin-bottom:5px; }
+  input, select { background:#0d121b; border:1px solid var(--line); color:var(--text);
+                  border-radius:6px; padding:8px 10px; font:inherit; font-size:14px; }
+  input[type=password] { width:280px; }
+  button { background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+           border-radius:6px; padding:8px 14px; font:inherit; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#4da3ff; }
+  button.danger { color:#ffb4b4; }
+  button.danger:hover { border-color:var(--bad); }
+  .row { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
+
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--dim); padding:8px 10px; border-bottom:1px solid var(--line); position:sticky; top:0;
+       background:var(--panel-2); }
+  td { padding:7px 10px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  tr.voided td { opacity:.45; text-decoration:line-through; }
+  tr.voided td:last-child { text-decoration:none; opacity:1; }
+  .tag { font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; color:#fff; }
+  .vfy { font-size:10px; font-weight:700; padding:2px 6px; border-radius:3px; }
+  .vfy.verified { color:var(--live); background:rgba(63,208,127,.15); }
+  .vfy.nil { color:var(--bad); background:rgba(255,128,128,.15); }
+  .vfy.unmatched { color:var(--dim); background:rgba(140,150,170,.12); }
+  .vfy.voided { color:var(--dim); background:rgba(140,150,170,.2); }
+  .msg { font-size:13px; padding:10px 0; color:var(--muted); }
+  .msg.err { color:var(--bad); }
+  .note { font-size:12.5px; color:var(--muted); line-height:1.6; }
+  .note b { color:var(--text); font-weight:600; }
+  .hidden { display:none !important; }
+  .scroll { max-height:64vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Log review</h1>
+    <a class="back" href="./">&larr; back to the scoreboard</a>
+  </header>
+
+  <div class="card" id="auth">
+    <div class="row">
+      <div>
+        <label for="token">Admin token</label>
+        <input id="token" type="password" placeholder="RR_ADMIN_TOKEN" autocomplete="off" />
+      </div>
+      <button id="signin">Open the log</button>
+    </div>
+    <div class="msg" id="auth-msg">
+      Set <b>RR_ADMIN_TOKEN</b> before starting the server to choose this yourself.
+      If you didn't, one was generated and written to the server's log at startup.
+    </div>
+  </div>
+
+  <div id="panel" class="hidden">
+    <div class="card">
+      <p class="note">
+        <b>Verified</b> — the other operator's log contains the same contact.
+        <b>NIL</b> — they submitted a log and this contact is <i>not</i> in it, which is
+        the classic sign of a busted callsign or an invented contact.
+        <b>Unmatched</b> — they never submitted a log, so there is nothing to check
+        against. Most contacts at a collegiate event are unmatched and that is
+        entirely normal; only NIL is evidence of anything.
+      </p>
+      <p class="note">
+        Voiding removes a contact from every total it fed, and survives a restart.
+        It is reversible.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label for="f-team">Entrant</label>
+          <select id="f-team"><option value="">everyone</option></select>
+        </div>
+        <div>
+          <label for="f-status">Status</label>
+          <select id="f-status">
+            <option value="">any</option>
+            <option value="nil">NIL only</option>
+            <option value="verified">verified only</option>
+            <option value="unmatched">unmatched only</option>
+            <option value="voided">voided only</option>
+          </select>
+        </div>
+        <button id="refresh">Refresh</button>
+        <div class="msg" id="count"></div>
+      </div>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Entrant</th><th>Logged by</th><th>Worked</th>
+            <th>Band</th><th>Mode</th><th>Grid</th><th>Status</th><th>Source</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var BASE = location.pathname.replace(/\/admin\/?$/, "").replace(/\/+$/, "");
+  var token = "";
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "X-Admin-Token": token }, opts.headers || {});
+    return fetch(BASE + path, opts).then(function (r) {
+      if (r.status === 403) { throw new Error("that token was not accepted"); }
+      if (!r.ok) { return r.json().then(function (d) { throw new Error(d.detail || r.statusText); }); }
+      return r.json();
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
+    });
+  }
+
+  function load() {
+    var team = document.getElementById("f-team").value;
+    var status = document.getElementById("f-status").value;
+    var q = "?limit=500" + (team ? "&team=" + encodeURIComponent(team) : "") +
+            (status ? "&status=" + encodeURIComponent(status) : "");
+    return api("/api/contacts" + q).then(function (d) {
+      var sel = document.getElementById("f-team");
+      if (sel.options.length === 1) {
+        d.teams.forEach(function (t) {
+          var o = document.createElement("option");
+          o.value = t.abbr; o.textContent = t.abbr + " — " + t.name;
+          sel.appendChild(o);
+        });
+      }
+      document.getElementById("count").textContent = d.contacts.length + " shown";
+      document.getElementById("rows").innerHTML = d.contacts.map(function (c) {
+        var voided = c.status === "voided";
+        return '<tr class="' + (voided ? "voided" : "") + '" data-uid="' + c.uid + '">' +
+          "<td>" + (c.when ? esc(c.when.slice(11, 19)) + "z" : "—") + "</td>" +
+          "<td>" + (c.team ? '<span class="tag" style="background:' + c.color + '">' + esc(c.team) + "</span>" : "—") + "</td>" +
+          "<td>" + esc(c.station) + "</td>" +
+          "<td><b>" + esc(c.call) + "</b></td>" +
+          "<td>" + esc(c.band) + "</td><td>" + esc(c.mode) + "</td><td>" + esc(c.grid) + "</td>" +
+          '<td><span class="vfy ' + c.status + '">' + c.status + "</span></td>" +
+          '<td style="color:var(--dim)">' + esc(c.source) + "</td>" +
+          "<td>" + (voided
+            ? '<button data-act="restore">Restore</button>'
+            : '<button class="danger" data-act="void">Void</button>') + "</td></tr>";
+      }).join("");
+    });
+  }
+
+  document.getElementById("signin").addEventListener("click", function () {
+    token = document.getElementById("token").value.trim();
+    var msg = document.getElementById("auth-msg");
+    load().then(function () {
+      document.getElementById("panel").classList.remove("hidden");
+      document.getElementById("auth").classList.add("hidden");
+    }).catch(function (e) {
+      msg.textContent = e.message;
+      msg.className = "msg err";
+    });
+  });
+  document.getElementById("token").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { document.getElementById("signin").click(); }
+  });
+  document.getElementById("refresh").addEventListener("click", load);
+  document.getElementById("f-team").addEventListener("change", load);
+  document.getElementById("f-status").addEventListener("change", load);
+
+  document.getElementById("rows").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button");
+    if (!btn) { return; }
+    var uid = btn.closest("tr").dataset.uid;
+    var act = btn.dataset.act;
+    var reason = "";
+    if (act === "void") {
+      reason = prompt("Why is this contact being voided?", "incomplete or unverifiable");
+      if (reason === null) { return; }
+    }
+    btn.disabled = true;
+    api("/api/contacts/" + uid + "/" + act + (reason ? "?reason=" + encodeURIComponent(reason) : ""),
+        { method: "POST" })
+      .then(load)
+      .catch(function (e) { alert(e.message); btn.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>

@@ -14,11 +14,12 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .adif import Qso
 from .config import Contest, Team
 from .modes import Mode
+from .verify import NIL, UNMATCHED, VERIFIED, VOIDED
 
 # Why a QSO was not scored. These strings surface in the UI, so they are
 # phrased as reasons rather than error codes.
@@ -27,6 +28,7 @@ REJECT_WINDOW = "outside the contest window"
 REJECT_BAND = "band not used in this contest"
 REJECT_MODE = "mode not used in this contest"
 REJECT_DUPE = "duplicate contact"
+REJECT_VOID = "voided by an official"
 
 
 @dataclass
@@ -42,7 +44,12 @@ class TeamScore:
     by_operator: Counter = field(default_factory=Counter)
     by_band: Counter = field(default_factory=Counter)
     by_mode: Counter = field(default_factory=Counter)
+    verification: Counter = field(default_factory=Counter)
     last_qso: datetime | None = None
+
+    @property
+    def confirmed(self) -> int:
+        return self.verification[VERIFIED]
 
     @property
     def multipliers(self) -> int:
@@ -64,6 +71,11 @@ class TeamScore:
             "bands": dict(self.by_band.most_common()),
             "modes": dict(self.by_mode.most_common()),
             "last_qso": self.last_qso.isoformat() if self.last_qso else None,
+            "affiliation": self.team.affiliation,
+            "grid": self.team.grid,
+            "verified": self.verification[VERIFIED],
+            "nil": self.verification[NIL],
+            "unmatched": self.verification[UNMATCHED],
         }
         row.update(board.mode.team_extras(self, board))
         return row
@@ -90,11 +102,21 @@ class Scoreboard:
         self.rejected: Counter = Counter()
         self.total_seen = 0
 
+        # Everyone the teams worked who is not competing. These are the people
+        # a collegiate event depends on — nobody scores without somebody to
+        # answer — so they get a leaderboard of their own.
+        self.chasers: Counter = Counter()
+        self.chaser_teams: dict[str, set[str]] = defaultdict(set)
+        self.chaser_last: dict[str, datetime] = {}
+        self.verification: Counter = Counter()
+
         # Mode-owned state. Kept on the board rather than inside the mode so a
         # snapshot is one object and the mode itself stays stateless per QSO.
         self.owners: dict[str, str] = {}       # conquest: state -> team abbr
         self.first_claim: dict[str, str] = {}  # conquest: who got there first
         self.markers: list[dict] = []          # dx: positions for the globe
+        self.state_value: dict[str, int] = {}  # scarcity: price paid per state
+        self.claim_log: list[dict] = []        # scarcity: the running ticker
 
     # -- rules ------------------------------------------------------------
 
@@ -128,9 +150,21 @@ class Scoreboard:
 
     # -- accumulation -----------------------------------------------------
 
-    def add(self, qso: Qso) -> str | None:
-        """Score one QSO. Returns None if accepted, otherwise the reason."""
+    def add(self, qso: Qso, status: str = UNMATCHED, void_reason: str = "") -> str | None:
+        """Score one QSO. Returns None if accepted, otherwise the reason.
+
+        ``status`` is what the cross-check made of it. It does not decide
+        whether the contact counts — most contacts at a collegiate event are
+        with people who will never submit a log, and refusing those would
+        punish teams for working exactly who the contest wants them to work.
+        It is recorded, shown, and left for an official to act on.
+        """
         self.total_seen += 1
+
+        if void_reason:
+            self.rejected[REJECT_VOID] += 1
+            return REJECT_VOID
+
         reason = self.check(qso)
         if reason is not None:
             self.rejected[reason] += 1
@@ -144,13 +178,23 @@ class Scoreboard:
         score.by_operator[qso.station] += 1
         score.by_band[qso.band] += 1
         score.by_mode[qso.mode] += 1
+        score.verification[status] += 1
+        self.verification[status] += 1
         if qso.when and (score.last_qso is None or qso.when > score.last_qso):
             score.last_qso = qso.when
+
+        # Anyone worked who is not themselves competing is a chaser.
+        if self.contest.team_for(qso.call) is None:
+            self.chasers[qso.call] += 1
+            self.chaser_teams[qso.call].add(team.abbr)
+            if qso.when and qso.when > self.chaser_last.get(qso.call, qso.when - timedelta(days=1)):
+                self.chaser_last[qso.call] = qso.when
 
         self.mode.award(qso, team, score, self)
 
         self.recent.appendleft(
             {
+                "uid": qso.uid,
                 "team": team.abbr,
                 "color": team.color,
                 "station": qso.station,
@@ -158,6 +202,7 @@ class Scoreboard:
                 "band": qso.band,
                 "mode": qso.mode,
                 "grid": qso.square,
+                "status": status,
                 "when": qso.when.isoformat() if qso.when else None,
             }
         )
@@ -166,6 +211,46 @@ class Scoreboard:
     def add_all(self, qsos) -> int:
         """Score a batch, returning how many were accepted."""
         return sum(1 for qso in qsos if self.add(qso) is None)
+
+    def score_store(self, store, crosscheck=None) -> int:
+        """Fold an entire store in, in log order, applying voids and status."""
+        ordered = sorted(store.qsos, key=lambda q: (q.when is None, q.when))
+        accepted = 0
+        for qso in ordered:
+            status = crosscheck.status(qso) if crosscheck else UNMATCHED
+            reason = store.voids.get(qso.uid, "")
+            if self.add(qso, status=status, void_reason=reason) is None:
+                accepted += 1
+        return accepted
+
+    # -- chasers ----------------------------------------------------------
+
+    def chaser_board(self, limit: int = 25) -> list[dict]:
+        """Who worked the teams most.
+
+        Ranked by contacts, with the number of different schools reached as
+        the tie-break and a flag for anyone who worked every one of them —
+        a clean sweep is the thing worth chasing if you are not competing.
+        """
+        total_teams = len(self.teams)
+        rows = []
+        for call, count in self.chasers.items():
+            reached = self.chaser_teams[call]
+            rows.append(
+                {
+                    "call": call,
+                    "qsos": count,
+                    "teams": len(reached),
+                    "worked": sorted(reached),
+                    "sweep": total_teams > 0 and len(reached) == total_teams,
+                    "last": self.chaser_last[call].isoformat()
+                    if call in self.chaser_last else None,
+                }
+            )
+        rows.sort(key=lambda r: (r["qsos"], r["teams"]), reverse=True)
+        for position, row in enumerate(rows[:limit], start=1):
+            row["position"] = position
+        return rows[:limit]
 
     # -- output -----------------------------------------------------------
 
@@ -193,13 +278,25 @@ class Scoreboard:
                 "bands": sorted(contest.bands),
                 "modes": sorted(contest.modes),
                 "server_time": datetime.now(timezone.utc).isoformat(),
+                "compete_as": contest.compete_as,
             },
             "standings": self.standings(),
             "recent": list(self.recent),
+            "chasers": self.chaser_board(),
+            "homes": [
+                {
+                    "abbr": t.abbr, "color": t.color, "grid": t.grid,
+                    "lat": t.position[0], "lon": t.position[1], "name": t.name,
+                }
+                for t in contest.teams
+                if t.position is not None
+            ],
             "totals": {
                 "qsos_scored": sum(t.qsos for t in self.teams.values()),
                 "qsos_seen": self.total_seen,
                 "rejected": dict(self.rejected),
+                "verification": dict(self.verification),
+                "chasers": len(self.chasers),
             },
         }
         payload.update(self.mode.snapshot_extras(self))

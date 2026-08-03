@@ -8,3 +8,6 @@ venv/
 wsjtx_log.txt
 mock_raw_listener_output.txt
 .pytest_cache/
+
+# Voided contacts are a judgement made during one event, not source.
+voided.json

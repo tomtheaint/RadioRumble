@@ -48,6 +48,23 @@ qso_points = 1
 #    "contest"    once, full stop
 dupe_scope = "band"
 
+#  Who is competing against whom.
+#    "team"      schools against each other, rosters as written below
+#    "operator"  every rostered callsign becomes its own entry, for a
+#                club's internal contest or an event open to all comers
+compete_as = "team"
+
+#  A directory of submitted logs, one file per entrant, instead of the
+#  single file above. This is what makes cross-checking possible: a
+#  contact can only be confirmed against the other operator's own log.
+#  Generate a set with: python createLog.py --split logs
+log_dir = "logs"
+
+#  How far two logs may disagree about when a contact happened and still
+#  be treated as the same contact. Clocks drift and loggers round
+#  differently; an FT8 exchange takes about a minute end to end.
+match_minutes = 3
+
 
 #  ---------------------------------------------------------------------------
 #  Per-mode settings. Only the table matching `mode` above is read.
@@ -71,6 +88,18 @@ points_per_dx = 3
 #  while countries still drive the multiplier.
 count_domestic = false
 
+[scarcity]
+#  Conquest, but the last states standing are the valuable ones. Every state
+#  starts at base_points; each one claimed makes the remaining ones worth
+#  step_points more. Rhode Island at minute five is worth the same as Texas,
+#  and at minute fifty it is worth several times as much.
+#
+#  The price is locked in when the state is claimed, so banking one early
+#  keeps its early price -- the reward is for going and getting the awkward
+#  ones while they are still awkward.
+base_points = 10
+step_points = 5
+
 
 #  ---------------------------------------------------------------------------
 #  Teams. `callsigns` lists the station callsigns your operators log under —
@@ -86,27 +115,32 @@ name = "Kansas State University"
 abbr = "KSU"
 color = "#512888"
 callsigns = ["KE0VUM"]
+grid = "EM19"
 
 [[teams]]
 name = "University of Kansas"
 abbr = "KU"
 color = "#0051BA"
 callsigns = ["KD2FMW"]
+grid = "EM28"
 
 [[teams]]
 name = "University of Nebraska"
 abbr = "NEB"
 color = "#E41C38"
 callsigns = ["N0CALL"]
+grid = "EN10"
 
 [[teams]]
 name = "Iowa State University"
 abbr = "ISU"
 color = "#C8102E"
 callsigns = ["VA3OFF"]
+grid = "EN32"
 
 [[teams]]
 name = "Oklahoma State University"
 abbr = "OSU"
 color = "#FF7300"
 callsigns = ["W1XYZ"]
+grid = "EM16"
