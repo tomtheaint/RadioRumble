@@ -6,6 +6,18 @@
 [contest]
 name = "Radio Rumble"
 
+#  Which game is being played. Same log, same teams, same clock — only the
+#  question of what a contact is worth changes.
+#
+#    "classic"   points x grid squares. Work more, and work more places.
+#    "conquest"  a map of the United States. Work a station in a state and
+#                your school owns it, coloured in. Score is territory held.
+#    "dx"        only contacts outside the US count, scored by how many
+#                countries you reach. Drawn on a globe.
+#
+#  Settings for each live in the [classic] / [conquest] / [dx] tables below.
+mode = "conquest"
+
 #  The clock. Both are UTC. Leave them commented out and every QSO in the log
 #  counts, which is what you want while testing — the shipped mock log would
 #  otherwise fall outside any window you picked today.
@@ -35,6 +47,29 @@ qso_points = 1
 #    "band-mode"  once per band and mode  (FT8 and FT4 on 20m are separate)
 #    "contest"    once, full stop
 dupe_scope = "band"
+
+
+#  ---------------------------------------------------------------------------
+#  Per-mode settings. Only the table matching `mode` above is read.
+#  ---------------------------------------------------------------------------
+
+[conquest]
+#  Who holds a state.
+#    "first"  whoever gets there first keeps it. Rewards speed, and the map
+#             stops moving once it fills up.
+#    "most"   whoever has the most contacts into it, ties going to whoever
+#             claimed it first. States change hands all afternoon — this is
+#             the version that behaves like a game.
+claim = "first"
+
+[dx]
+#  A DX contact is worth more than a domestic one is in classic mode, because
+#  there are far fewer of them to be had in two hours.
+points_per_dx = 3
+
+#  Set true to let domestic contacts score too, at the ordinary qso_points,
+#  while countries still drive the multiplier.
+count_domestic = false
 
 
 #  ---------------------------------------------------------------------------

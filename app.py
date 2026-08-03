@@ -17,6 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from radiorumble import config
 from radiorumble.ingest import ContestIngest
@@ -79,6 +80,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Radio Rumble", lifespan=lifespan)
+
+# The map outlines are too large to inline in the page, so they are served as
+# files and fetched with a path relative to wherever the page was loaded from
+# — which keeps them working behind a path-prefixing proxy.
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)

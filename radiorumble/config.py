@@ -6,6 +6,7 @@ means adding a ``[[teams]]`` block, not editing Python.
 """
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +37,14 @@ class Contest:
     teams: tuple[Team, ...]
     log_file: Path
     grid_states: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    mode: str = "classic"      # "classic" | "conquest" | "dx"
+    mode_settings: dict = field(default_factory=dict)
+
+    def build_mode(self):
+        """The scoring rules for this contest. Imported late to avoid a cycle."""
+        from .modes import build
+
+        return build(self.mode, self.mode_settings)
 
     # -- team lookup ------------------------------------------------------
 
@@ -120,6 +129,9 @@ def load_grid_states(path: Path = DEFAULT_GRIDS) -> dict[str, tuple[str, ...]]:
     if not path.exists():
         return {}
     for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
         parts = [p.strip() for p in line.split(",") if p.strip()]
         if len(parts) < 2:
             continue
@@ -148,6 +160,12 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
     if not log_file.is_absolute():
         log_file = BASE_DIR / log_file
 
+    # Mode settings live in their own table, so [conquest] and [dx] can each
+    # carry options without colliding. RR_MODE overrides the file, which is
+    # how you show all three games at a demo without editing anything.
+    mode = os.environ.get("RR_MODE") or contest.get("mode", "classic")
+    mode_settings = data.get(mode, {}) if isinstance(data.get(mode), dict) else {}
+
     return Contest(
         name=contest.get("name", "Radio Rumble"),
         start=_as_utc(contest.get("start")),
@@ -159,4 +177,6 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
         teams=teams,
         log_file=log_file,
         grid_states=load_grid_states(),
+        mode=mode,
+        mode_settings=mode_settings,
     )

@@ -6,9 +6,9 @@ to :meth:`Scoreboard.add`, which either accepts it or says why not — and the
 is the question that actually gets asked, and an answer of *dupe on 20m* ends
 the conversation where a silent drop starts an argument.
 
-Score follows the shape every contest uses: points times multipliers. Working
-more stations raises points; working *new places* raises the multiplier, so a
-team that sits on one frequency all afternoon loses to one that moves around.
+Everything here is common to all three contest modes: rosters, the clock,
+bands, and what makes two contacts the same contact. What a contact is *worth*
+belongs to :mod:`radiorumble.modes`.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from .adif import Qso
 from .config import Contest, Team
+from .modes import Mode
 
 # Why a QSO was not scored. These strings surface in the UI, so they are
 # phrased as reasons rather than error codes.
@@ -35,6 +36,9 @@ class TeamScore:
     points: int = 0
     squares: set[str] = field(default_factory=set)
     states: set[str] = field(default_factory=set)
+    entities: set[str] = field(default_factory=set)
+    state_contacts: Counter = field(default_factory=Counter)
+    continents: Counter = field(default_factory=Counter)
     by_operator: Counter = field(default_factory=Counter)
     by_band: Counter = field(default_factory=Counter)
     by_mode: Counter = field(default_factory=Counter)
@@ -44,18 +48,8 @@ class TeamScore:
     def multipliers(self) -> int:
         return len(self.squares)
 
-    @property
-    def score(self) -> int:
-        """Points times multipliers, with multipliers of zero treated as one.
-
-        Otherwise the first team on the board sits at zero until it happens to
-        log a contact carrying a grid square, which reads as a broken
-        scoreboard rather than as a rule.
-        """
-        return self.points * max(1, self.multipliers)
-
-    def as_dict(self) -> dict:
-        return {
+    def as_dict(self, board) -> dict:
+        row = {
             "name": self.team.name,
             "abbr": self.team.abbr,
             "color": self.team.color,
@@ -63,7 +57,7 @@ class TeamScore:
             "points": self.points,
             "multipliers": self.multipliers,
             "states": len(self.states),
-            "score": self.score,
+            "score": board.mode.score_for(self, board),
             "operators": [
                 {"call": call, "qsos": n} for call, n in self.by_operator.most_common()
             ],
@@ -71,6 +65,8 @@ class TeamScore:
             "modes": dict(self.by_mode.most_common()),
             "last_qso": self.last_qso.isoformat() if self.last_qso else None,
         }
+        row.update(board.mode.team_extras(self, board))
+        return row
 
 
 class Scoreboard:
@@ -82,8 +78,9 @@ class Scoreboard:
 
     RECENT_LIMIT = 40
 
-    def __init__(self, contest: Contest) -> None:
+    def __init__(self, contest: Contest, mode: Mode | None = None) -> None:
         self.contest = contest
+        self.mode = mode if mode is not None else contest.build_mode()
         self.teams: dict[str, TeamScore] = {
             team.abbr: TeamScore(team=team) for team in contest.teams
         }
@@ -92,6 +89,12 @@ class Scoreboard:
         self.recent: deque = deque(maxlen=self.RECENT_LIMIT)
         self.rejected: Counter = Counter()
         self.total_seen = 0
+
+        # Mode-owned state. Kept on the board rather than inside the mode so a
+        # snapshot is one object and the mode itself stays stateless per QSO.
+        self.owners: dict[str, str] = {}       # conquest: state -> team abbr
+        self.first_claim: dict[str, str] = {}  # conquest: who got there first
+        self.markers: list[dict] = []          # dx: positions for the globe
 
     # -- rules ------------------------------------------------------------
 
@@ -121,7 +124,7 @@ class Scoreboard:
             return REJECT_MODE
         if self._dupe_key(qso) in self._worked[team.abbr]:
             return REJECT_DUPE
-        return None
+        return self.mode.extra_reject(qso, team, self)
 
     # -- accumulation -----------------------------------------------------
 
@@ -138,17 +141,13 @@ class Scoreboard:
         self._worked[team.abbr].add(self._dupe_key(qso))
 
         score.qsos += 1
-        score.points += self.contest.qso_points
         score.by_operator[qso.station] += 1
         score.by_band[qso.band] += 1
         score.by_mode[qso.mode] += 1
         if qso.when and (score.last_qso is None or qso.when > score.last_qso):
             score.last_qso = qso.when
 
-        square = qso.square
-        if square:
-            score.squares.add(square)
-            score.states.update(self.contest.states_for(square))
+        self.mode.award(qso, team, score, self)
 
         self.recent.appendleft(
             {
@@ -158,7 +157,7 @@ class Scoreboard:
                 "call": qso.call,
                 "band": qso.band,
                 "mode": qso.mode,
-                "grid": square,
+                "grid": qso.square,
                 "when": qso.when.isoformat() if qso.when else None,
             }
         )
@@ -172,24 +171,21 @@ class Scoreboard:
 
     def standings(self) -> list[dict]:
         """Teams sorted the way a scoreboard is read: leader first."""
-        ranked = sorted(
-            self.teams.values(),
-            key=lambda s: (s.score, s.qsos, s.multipliers),
-            reverse=True,
-        )
-        out = []
-        for position, score in enumerate(ranked, start=1):
-            row = score.as_dict()
+        rows = [score.as_dict(self) for score in self.teams.values()]
+        rows.sort(key=lambda r: (r["score"], r["qsos"], r["multipliers"]), reverse=True)
+        for position, row in enumerate(rows, start=1):
             row["position"] = position
-            out.append(row)
-        return out
+        return rows
 
     def snapshot(self) -> dict:
         """Everything the scoreboard page needs, in one JSON-ready object."""
         contest = self.contest
-        return {
+        payload = {
             "contest": {
                 "name": contest.name,
+                "mode": self.mode.key,
+                "mode_label": self.mode.label,
+                "view": self.mode.view,
                 "status": contest.status,
                 "start": contest.start.isoformat() if contest.start else None,
                 "end": contest.end.isoformat() if contest.end else None,
@@ -206,3 +202,5 @@ class Scoreboard:
                 "rejected": dict(self.rejected),
             },
         }
+        payload.update(self.mode.snapshot_extras(self))
+        return payload

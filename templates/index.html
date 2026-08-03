@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Radio Rumble — Live Scoreboard</title>
 <style>
-  /* Everything is inline on purpose. The scoreboard gets opened through
-     whatever proxy is to hand at an event — a tunnel, a path-prefixing
-     dev proxy, someone's phone hotspot — and a page with no external
-     requests cannot lose its stylesheet to a rewritten path. */
+  /* Styles are inline on purpose. The scoreboard gets opened through whatever
+     proxy is to hand at an event — a tunnel, a path-prefixing dev proxy,
+     someone's phone hotspot — and a page with no external requests cannot
+     lose its stylesheet to a rewritten path. The map outlines are the one
+     exception: too large to inline, so they are fetched with a relative URL. */
   :root {
     --bg: #0b0e14;
     --panel: #141922;
@@ -17,103 +18,113 @@
     --text: #e8edf5;
     --muted: #8b97ad;
     --dim: #5d6980;
-    --accent: #4da3ff;
     --live: #3fd07f;
+    --land: #2a3446;
+    --land-line: #3d4a63;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
+    margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 20px 16px 48px; }
 
   /* ---------- header ---------- */
   header {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
-    padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 20px;
   }
   h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
   .pill {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
     padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
   }
   .pill.running { color: var(--live); border-color: rgba(63,208,127,.45); background: rgba(63,208,127,.10); }
   .pill.pending { color: #ffc857; border-color: rgba(255,200,87,.45); background: rgba(255,200,87,.10); }
   .pill.finished { color: var(--dim); }
-  .dot {
-    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--live); margin-right: 6px; vertical-align: middle;
-  }
+  .pill.mode { color: var(--text); border-color: var(--line); background: var(--panel-2); }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background: var(--live); margin-right:6px; vertical-align: middle; }
   .running .dot { animation: pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-  .clock {
-    margin-left: auto; text-align: right;
-  }
-  .clock .value {
-    font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em; line-height: 1.1;
-  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+  .clock { margin-left: auto; text-align: right; }
+  .clock .value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1.1; }
   .clock .label { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--dim); }
 
   /* ---------- layout ---------- */
-  .cols { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
-  @media (max-width: 880px) { .cols { grid-template-columns: 1fr; } }
+  .cols { display: grid; gap: 18px; align-items: start; }
+  .cols.with-visual { grid-template-columns: minmax(0,1.55fr) minmax(320px,1fr); }
+  .cols.plain { grid-template-columns: minmax(0,1fr) 320px; }
+  @media (max-width: 980px) { .cols.with-visual, .cols.plain { grid-template-columns: 1fr; } }
 
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   .panel h2 {
     margin: 0; padding: 12px 16px; font-size: 12px; font-weight: 700;
     text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
     border-bottom: 1px solid var(--line); background: var(--panel-2);
+    display: flex; align-items: center; gap: 10px;
   }
+  .panel h2 .note { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--dim); }
+  .stack > * + * { margin-top: 18px; }
 
   /* ---------- standings ---------- */
   .team {
-    display: grid;
-    grid-template-columns: 34px 1fr auto;
-    gap: 14px; align-items: center;
-    padding: 14px 16px; border-bottom: 1px solid var(--line);
-    position: relative;
+    display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center;
+    padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--line); position: relative;
   }
   .team:last-child { border-bottom: 0; }
   .team .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
-  .rank { font-size: 19px; font-weight: 700; color: var(--dim); text-align: center; font-variant-numeric: tabular-nums; }
+  .rank { font-size: 18px; font-weight: 700; color: var(--dim); text-align: center; font-variant-numeric: tabular-nums; }
   .team.leader .rank { color: var(--text); }
-  .who .abbr { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+  .who .abbr { font-weight: 700; font-size: 16px; }
   .who .full { font-size: 12px; color: var(--muted); }
-  .who .ops { font-size: 11px; color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .nums { display: flex; gap: 18px; text-align: right; }
-  .nums div { min-width: 46px; }
-  .nums .n { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
-  .nums .k { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); }
-  .nums .score .n { font-size: 24px; }
+  .who .ops { font-size: 11px; color: var(--dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .nums { display: flex; gap: 14px; text-align: right; }
+  .nums div { min-width: 42px; }
+  .nums .n { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .nums .k { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+  .nums .score .n { font-size: 23px; }
   @media (max-width: 560px) {
-    .team { grid-template-columns: 26px 1fr; }
-    .nums { grid-column: 1 / -1; justify-content: flex-start; gap: 22px; }
+    .team { grid-template-columns: 24px 1fr; }
+    .nums { grid-column: 1 / -1; justify-content: flex-start; }
   }
 
   /* ---------- recent ---------- */
-  .qso {
-    display: flex; gap: 10px; align-items: baseline;
-    padding: 8px 14px; border-bottom: 1px solid var(--line);
-    font-size: 13px; font-variant-numeric: tabular-nums;
-  }
+  .qso { display: flex; gap: 9px; align-items: baseline; padding: 7px 14px;
+         border-bottom: 1px solid var(--line); font-size: 13px; font-variant-numeric: tabular-nums; }
   .qso:last-child { border-bottom: 0; }
-  .qso .tag {
-    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
-    color: #fff; flex: none; letter-spacing: .04em;
-  }
+  .qso .tag { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; color: #fff; flex: none; }
   .qso .call { font-weight: 600; }
   .qso .meta { margin-left: auto; color: var(--dim); font-size: 11px; }
 
-  .empty { padding: 22px 16px; color: var(--dim); font-size: 13px; }
-  .foot {
-    margin-top: 18px; font-size: 12px; color: var(--dim);
-    display: flex; flex-wrap: wrap; gap: 6px 18px;
+  /* ---------- map + globe ---------- */
+  .visual { position: relative; background: #0d121b; }
+  svg.map { display: block; width: 100%; height: auto; }
+  svg.map path.state {
+    fill: var(--land); stroke: var(--land-line); stroke-width: .6;
+    transition: fill .45s ease; cursor: default;
   }
+  svg.map path.state.owned { stroke: rgba(255,255,255,.35); stroke-width: .8; }
+  svg.map path.state:hover { stroke: #fff; stroke-width: 1.4; }
+  canvas.globe { display: block; width: 100%; height: auto; cursor: grab; }
+  canvas.globe:active { cursor: grabbing; }
+
+  .tip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity .12s;
+    background: rgba(8,11,17,.95); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; white-space: nowrap; transform: translate(-50%,-140%);
+  }
+  .tip b { display: block; font-size: 13px; }
+  .tip .own { color: var(--muted); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12px; }
+  .legend span { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .empty { padding: 22px 16px; color: var(--dim); font-size: 13px; }
+  .foot { margin-top: 18px; font-size: 12px; color: var(--dim); display: flex; flex-wrap: wrap; gap: 6px 18px; }
   .foot b { color: var(--muted); font-weight: 600; }
   .offline { color: #ff8080; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -121,6 +132,7 @@
 
   <header>
     <h1 id="title">Radio Rumble</h1>
+    <span class="pill mode" id="mode-pill">—</span>
     <span class="pill" id="status"><span class="dot"></span><span id="status-text">connecting</span></span>
     <div class="clock">
       <div class="value" id="clock">--:--</div>
@@ -128,15 +140,40 @@
     </div>
   </header>
 
-  <div class="cols">
-    <div class="panel">
-      <h2>Standings</h2>
-      <div id="standings"><div class="empty">Waiting for the first contact…</div></div>
+  <div class="cols plain" id="cols">
+
+    <div class="stack" id="left">
+      <!-- Conquest: the map -->
+      <div class="panel hidden" id="map-panel">
+        <h2>Territory <span class="note" id="map-note"></span></h2>
+        <div class="visual">
+          <svg class="map" id="usmap" viewBox="0 0 960 600" role="img" aria-label="Map of the United States coloured by which team holds each state"></svg>
+          <div class="tip" id="map-tip"></div>
+        </div>
+        <div class="legend" id="map-legend"></div>
+      </div>
+
+      <!-- DX: the globe -->
+      <div class="panel hidden" id="globe-panel">
+        <h2>Contacts worldwide <span class="note">drag to spin</span></h2>
+        <div class="visual">
+          <canvas class="globe" id="globe" width="820" height="620"></canvas>
+          <div class="tip" id="globe-tip"></div>
+        </div>
+        <div class="legend" id="globe-legend"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Standings</h2>
+        <div id="standings"><div class="empty">Waiting for the first contact…</div></div>
+      </div>
     </div>
 
-    <div class="panel">
-      <h2>Latest contacts</h2>
-      <div id="recent"><div class="empty">Nothing logged yet.</div></div>
+    <div class="stack" id="right">
+      <div class="panel">
+        <h2>Latest contacts</h2>
+        <div id="recent"><div class="empty">Nothing logged yet.</div></div>
+      </div>
     </div>
   </div>
 
@@ -147,162 +184,473 @@
 (function () {
   "use strict";
 
-  // Build the websocket URL from wherever this page was actually served.
-  // Opened directly that is "/ws"; behind a path-prefixing proxy such as
-  // code-server's /proxy/7373/ it has to be "/proxy/7373/ws", and hardcoding
-  // either one breaks the other.
+  /* ------------------------------------------------------------------ *
+   * Where we are. Built from location.pathname so the page works both
+   * directly and behind a path-prefixing proxy such as /proxy/7373/.
+   * ------------------------------------------------------------------ */
+  var BASE = location.pathname.replace(/\/+$/, "");
   function socketURL() {
-    var scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    var base = location.pathname.replace(/\/+$/, "");
-    return scheme + "//" + location.host + base + "/ws";
-  }
-  function apiURL() {
-    var base = location.pathname.replace(/\/+$/, "");
-    return base + "/api/scoreboard";
+    return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + BASE + "/ws";
   }
 
-  var state = null;        // last snapshot received
-  var clockBase = null;    // {remaining, at} for a client-side countdown
-  var retry = 1000;
+  var state = null, clockBase = null, retry = 1000;
+  var usGeo = null, worldGeo = null, currentView = null;
 
   function pad(n) { return String(n).padStart(2, "0"); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
+  }); }
+
+  /* ================================================================== *
+   * Projections
+   * ================================================================== */
+
+  // Albers conic equal-area. The standard choice for a map of the US: it
+  // keeps state areas honest, which matters when the areas are the score.
+  function albers(lat0, lon0, p1, p2) {
+    var rad = Math.PI / 180;
+    var φ0 = lat0 * rad, λ0 = lon0 * rad, φ1 = p1 * rad, φ2 = p2 * rad;
+    var n = (Math.sin(φ1) + Math.sin(φ2)) / 2;
+    if (Math.abs(n) < 1e-10) { n = Math.sin(φ1) || 1e-10; }
+    var C = Math.cos(φ1) * Math.cos(φ1) + 2 * n * Math.sin(φ1);
+    var ρ0 = Math.sqrt(Math.max(1e-12, C - 2 * n * Math.sin(φ0))) / n;
+    return function (lon, lat) {
+      var φ = lat * rad, λ = lon * rad;
+      var ρ = Math.sqrt(Math.max(1e-12, C - 2 * n * Math.sin(φ))) / n;
+      var θ = n * (λ - λ0);
+      // Negated: the projection's y grows northward, an SVG's grows downward.
+      // Without this the country is drawn upside down, which reads as a
+      // broken map rather than as a sign convention.
+      return [ρ * Math.sin(θ), -(ρ0 - ρ * Math.cos(θ))];
+    };
+  }
+
+  var CONUS = albers(37.5, -96, 29.5, 45.5);
+  var AK    = albers(60.0, -152, 55, 65);
+  var HI    = albers(20.0, -157, 8, 18);
+
+  function projectionFor(name) {
+    if (name === "Alaska") { return AK; }
+    if (name === "Hawaii") { return HI; }
+    return CONUS;
+  }
+
+  function eachRing(geometry, fn) {
+    if (!geometry) { return; }
+    if (geometry.type === "Polygon") { geometry.coordinates.forEach(fn); }
+    else if (geometry.type === "MultiPolygon") {
+      geometry.coordinates.forEach(function (poly) { poly.forEach(fn); });
+    }
+  }
+
+  // Project every state, then fit the lower 48 to the viewport and drop
+  // Alaska and Hawaii into insets — the same composite everyone draws,
+  // because at true scale Alaska is half the picture and Hawaii is a speck.
+  function buildUsPaths(geo, width, height) {
+    var groups = { conus: [], Alaska: [], Hawaii: [] };
+    geo.features.forEach(function (f) {
+      var name = f.properties.name;
+      var proj = projectionFor(name);
+      var rings = [];
+      eachRing(f.geometry, function (ring) {
+        var pts = ring.map(function (c) { return proj(c[0], c[1]); });
+        if (pts.length > 2) { rings.push(pts); }
+      });
+      if (!rings.length) { return; }
+      var bucket = (name === "Alaska" || name === "Hawaii") ? name : "conus";
+      groups[bucket].push({ name: name, rings: rings });
+    });
+
+    function bounds(list) {
+      var b = [Infinity, Infinity, -Infinity, -Infinity];
+      list.forEach(function (s) {
+        s.rings.forEach(function (r) {
+          r.forEach(function (p) {
+            if (p[0] < b[0]) b[0] = p[0];
+            if (p[1] < b[1]) b[1] = p[1];
+            if (p[0] > b[2]) b[2] = p[0];
+            if (p[1] > b[3]) b[3] = p[1];
+          });
+        });
+      });
+      return b;
+    }
+
+    // Fit a group of shapes into a box, preserving aspect ratio.
+    function fit(list, x, y, w, h) {
+      if (!list.length) { return []; }
+      var b = bounds(list);
+      var k = Math.min(w / (b[2] - b[0] || 1), h / (b[3] - b[1] || 1));
+      var dx = x + (w - (b[2] - b[0]) * k) / 2 - b[0] * k;
+      var dy = y + (h - (b[3] - b[1]) * k) / 2 - b[1] * k;
+      return list.map(function (s) {
+        var d = s.rings.map(function (r) {
+          return "M" + r.map(function (p) {
+            return (p[0] * k + dx).toFixed(1) + "," + (p[1] * k + dy).toFixed(1);
+          }).join("L") + "Z";
+        }).join("");
+        return { name: s.name, d: d };
+      });
+    }
+
+    return [].concat(
+      fit(groups.conus, 8, 4, width - 16, height - 74),
+      fit(groups.Alaska, 10, height - 168, 210, 160),
+      fit(groups.Hawaii, 232, height - 108, 110, 96)
+    );
+  }
+
+  /* ================================================================== *
+   * Conquest: the map of the United States
+   * ================================================================== */
+
+  var mapPaths = null;
+
+  function renderMap() {
+    var svg = document.getElementById("usmap");
+    var info = state.map || { owners: {}, colors: {} };
+
+    if (!mapPaths && usGeo) {
+      mapPaths = buildUsPaths(usGeo, 960, 600);
+      svg.innerHTML = mapPaths.map(function (s) {
+        return '<path class="state" data-name="' + esc(s.name) + '" d="' + s.d + '"></path>';
+      }).join("");
+      wireMapHover(svg, info);
+    }
+    if (!mapPaths) { return; }
+
+    // Recolour in place rather than rebuilding: the CSS transition on fill is
+    // what makes a state visibly change hands.
+    svg.querySelectorAll("path.state").forEach(function (el) {
+      var owner = info.owners[el.dataset.name];
+      var color = owner ? info.colors[owner] : null;
+      el.setAttribute("fill", color || "");
+      el.classList.toggle("owned", !!owner);
+      if (!color) { el.style.fill = ""; } else { el.style.fill = color; }
+    });
+
+    var held = Object.keys(info.owners).length;
+    var total = info.total_states || 51;
+    document.getElementById("map-note").textContent =
+      held + " of " + total + " states held · " +
+      (info.claim_rule === "most" ? "most contacts holds a state" : "first contact claims a state");
+
+    document.getElementById("map-legend").innerHTML = (state.standings || []).map(function (t) {
+      var n = (t.owned_count != null) ? t.owned_count : 0;
+      return '<span><i style="background:' + t.color + '"></i>' + esc(t.abbr) + " " + n + "</span>";
+    }).join("") + '<span><i style="background:var(--land)"></i>unclaimed ' + (total - held) + "</span>";
+  }
+
+  function wireMapHover(svg, info) {
+    var tip = document.getElementById("map-tip");
+    svg.addEventListener("mousemove", function (ev) {
+      var el = ev.target.closest ? ev.target.closest("path.state") : null;
+      if (!el) { tip.style.opacity = 0; return; }
+      var name = el.dataset.name;
+      var owners = (state.map && state.map.owners) || {};
+      var owner = owners[name];
+      var team = (state.standings || []).filter(function (t) { return t.abbr === owner; })[0];
+      tip.innerHTML = "<b>" + esc(name) + "</b>" +
+        '<span class="own">' + (team ? esc(team.name) : "unclaimed") + "</span>";
+      var box = svg.getBoundingClientRect();
+      tip.style.left = (ev.clientX - box.left) + "px";
+      tip.style.top = (ev.clientY - box.top) + "px";
+      tip.style.opacity = 1;
+    });
+    svg.addEventListener("mouseleave", function () { tip.style.opacity = 0; });
+  }
+
+  /* ================================================================== *
+   * DX: the globe
+   * ================================================================== */
+
+  var spin = { lon: 98, lat: -18, dragging: false, lastX: 0, lastY: 0, auto: true };
+
+  function renderGlobe() {
+    var canvas = document.getElementById("globe");
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width, H = canvas.height;
+    var cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 18;
+    var rad = Math.PI / 180;
+    var λ0 = -spin.lon * rad, φ0 = -spin.lat * rad;
+    var sinφ0 = Math.sin(φ0), cosφ0 = Math.cos(φ0);
+
+    // Orthographic: the view from far away. Points on the far side of the
+    // sphere have a negative cosine of angular distance and are dropped.
+    function project(lon, lat) {
+      var φ = lat * rad, λ = lon * rad;
+      var cosc = sinφ0 * Math.sin(φ) + cosφ0 * Math.cos(φ) * Math.cos(λ - λ0);
+      if (cosc < 0) { return null; }
+      return [
+        cx + R * Math.cos(φ) * Math.sin(λ - λ0),
+        cy - R * (cosφ0 * Math.sin(φ) - sinφ0 * Math.cos(φ) * Math.cos(λ - λ0))
+      ];
+    }
+
+    ctx.clearRect(0, 0, W, H);
+
+    // The sphere itself.
+    var sky = ctx.createRadialGradient(cx - R * .35, cy - R * .4, R * .1, cx, cy, R);
+    sky.addColorStop(0, "#16203a");
+    sky.addColorStop(1, "#0a0f1a");
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fillStyle = sky; ctx.fill();
+    ctx.strokeStyle = "rgba(120,150,200,.35)"; ctx.lineWidth = 1; ctx.stroke();
+
+    // Graticule every 30 degrees, so rotation is legible.
+    ctx.strokeStyle = "rgba(120,150,200,.13)"; ctx.lineWidth = 1;
+    for (var lon = -180; lon < 180; lon += 30) {
+      ctx.beginPath(); var started = false;
+      for (var lat = -90; lat <= 90; lat += 3) {
+        var p = project(lon, lat);
+        if (!p) { started = false; continue; }
+        started ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]);
+        started = true;
+      }
+      ctx.stroke();
+    }
+    for (var la = -60; la <= 60; la += 30) {
+      ctx.beginPath(); started = false;
+      for (var lo = -180; lo <= 180; lo += 3) {
+        var q = project(lo, la);
+        if (!q) { started = false; continue; }
+        started ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]);
+        started = true;
+      }
+      ctx.stroke();
+    }
+
+    // Land. Each ring is drawn as its visible runs — a ring that crosses the
+    // horizon is split rather than filled straight across the sphere.
+    if (worldGeo) {
+      ctx.fillStyle = "#26324a";
+      ctx.strokeStyle = "rgba(150,180,220,.45)";
+      ctx.lineWidth = .7;
+      worldGeo.features.forEach(function (f) {
+        eachRing(f.geometry, function (ring) {
+          var run = [];
+          function flush() {
+            if (run.length > 2) {
+              ctx.beginPath();
+              ctx.moveTo(run[0][0], run[0][1]);
+              for (var i = 1; i < run.length; i++) { ctx.lineTo(run[i][0], run[i][1]); }
+              ctx.closePath(); ctx.fill(); ctx.stroke();
+            }
+            run = [];
+          }
+          ring.forEach(function (c) {
+            var p = project(c[0], c[1]);
+            if (p) { run.push(p); } else { flush(); }
+          });
+          flush();
+        });
+      });
+    }
+
+    // Contacts.
+    var markers = state.markers || [];
+    markers.forEach(function (m) {
+      var p = project(m.lon, m.lat);
+      if (!p) { return; }
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = hexToRgba(m.color, .18); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = m.color; ctx.fill();
+    });
+
+    document.getElementById("globe-legend").innerHTML =
+      (state.standings || []).map(function (t) {
+        return '<span><i style="background:' + t.color + '"></i>' + esc(t.abbr) +
+               " " + (t.entities != null ? t.entities : 0) + " countries</span>";
+      }).join("") + '<span>' + markers.length + " contacts plotted</span>";
+  }
+
+  function hexToRgba(hex, alpha) {
+    var h = (hex || "#888").replace("#", "");
+    if (h.length === 3) { h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]; }
+    var n = parseInt(h, 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+  }
+
+  function wireGlobe() {
+    var canvas = document.getElementById("globe");
+    canvas.addEventListener("mousedown", function (e) {
+      spin.dragging = true; spin.auto = false; spin.lastX = e.clientX; spin.lastY = e.clientY;
+    });
+    window.addEventListener("mouseup", function () { spin.dragging = false; });
+    window.addEventListener("mousemove", function (e) {
+      if (!spin.dragging) { return; }
+      spin.lon += (e.clientX - spin.lastX) * 0.35;
+      spin.lat = Math.max(-80, Math.min(80, spin.lat + (e.clientY - spin.lastY) * 0.3));
+      spin.lastX = e.clientX; spin.lastY = e.clientY;
+      if (state) { renderGlobe(); }
+    });
+    // A slow drift, so an unattended scoreboard still shows the whole world.
+    setInterval(function () {
+      if (currentView !== "globe" || !state || spin.dragging || !spin.auto) { return; }
+      spin.lon += 0.18;
+      renderGlobe();
+    }, 60);
+  }
+
+  /* ================================================================== *
+   * Panels common to every mode
+   * ================================================================== */
 
   function renderClock() {
-    var el = document.getElementById("clock");
-    var label = document.getElementById("clock-label");
+    var el = document.getElementById("clock"), label = document.getElementById("clock-label");
     if (!state) { return; }
     var c = state.contest;
-
     if (c.seconds_remaining === null || c.seconds_remaining === undefined) {
-      el.textContent = "open";
-      label.textContent = "no time limit set";
-      return;
+      el.textContent = "open"; label.textContent = "no time limit set"; return;
     }
-    // Tick locally between pushes so the clock doesn't freeze between QSOs.
     var elapsed = clockBase ? (Date.now() - clockBase.at) / 1000 : 0;
     var left = Math.max(0, Math.round(clockBase.remaining - elapsed));
     var h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60), s = left % 60;
     el.textContent = h > 0 ? h + ":" + pad(m) + ":" + pad(s) : pad(m) + ":" + pad(s);
     label.textContent = c.status === "pending" ? "until start"
-                      : c.status === "finished" ? "contest over"
-                      : "time remaining";
+                      : c.status === "finished" ? "contest over" : "time remaining";
   }
 
   function renderStatus(connected) {
-    var pill = document.getElementById("status");
-    var text = document.getElementById("status-text");
-    if (!connected) {
-      pill.className = "pill";
-      text.textContent = "reconnecting";
-      text.className = "offline";
-      return;
-    }
+    var pill = document.getElementById("status"), text = document.getElementById("status-text");
+    if (!connected) { pill.className = "pill"; text.textContent = "reconnecting"; text.className = "offline"; return; }
     text.className = "";
     var s = state ? state.contest.status : "running";
     pill.className = "pill " + s;
     text.textContent = s === "running" ? "live" : s;
   }
 
+  // Which numbers matter depends on the game being played.
+  function columnsFor(view, t) {
+    if (view === "usmap") {
+      return [[t.owned_count != null ? t.owned_count : 0, "states held"],
+              [t.qsos, "QSOs"],
+              [t.states, "reached"]];
+    }
+    if (view === "globe") {
+      return [[t.entities != null ? t.entities : 0, "countries"],
+              [t.qsos, "DX QSOs"],
+              [t.points, "points"]];
+    }
+    return [[t.qsos, "QSOs"], [t.multipliers, "grids"], [t.states, "states"]];
+  }
+
   function renderStandings() {
     var host = document.getElementById("standings");
     var rows = state.standings || [];
+    var view = state.contest.view;
     if (!rows.length) {
       host.innerHTML = '<div class="empty">No teams configured — add a [[teams]] block to contest.toml.</div>';
       return;
     }
     host.innerHTML = rows.map(function (t, i) {
-      var ops = (t.operators || []).map(function (o) { return o.call + " " + o.qsos; }).join(" · ");
+      var ops = (t.operators || []).map(function (o) { return esc(o.call) + " " + o.qsos; }).join(" · ");
+      var cells = columnsFor(view, t).map(function (c) {
+        return '<div><div class="n">' + c[0] + '</div><div class="k">' + c[1] + "</div></div>";
+      }).join("");
       return '<div class="team' + (i === 0 && t.score > 0 ? " leader" : "") + '">' +
         '<div class="bar" style="background:' + t.color + '"></div>' +
-        '<div class="rank">' + t.position + '</div>' +
-        '<div class="who">' +
-          '<div class="abbr">' + t.abbr + '</div>' +
-          '<div class="full">' + t.name + '</div>' +
-          (ops ? '<div class="ops">' + ops + '</div>' : '') +
-        '</div>' +
-        '<div class="nums">' +
-          '<div><div class="n">' + t.qsos + '</div><div class="k">QSOs</div></div>' +
-          '<div><div class="n">' + t.multipliers + '</div><div class="k">grids</div></div>' +
-          '<div><div class="n">' + t.states + '</div><div class="k">states</div></div>' +
+        '<div class="rank">' + t.position + "</div>" +
+        '<div class="who"><div class="abbr">' + esc(t.abbr) + "</div>" +
+          '<div class="full">' + esc(t.name) + "</div>" +
+          (ops ? '<div class="ops">' + ops + "</div>" : "") + "</div>" +
+        '<div class="nums">' + cells +
           '<div class="score"><div class="n">' + t.score.toLocaleString() + '</div><div class="k">score</div></div>' +
-        '</div>' +
-      '</div>';
+        "</div></div>";
     }).join("");
   }
 
   function renderRecent() {
     var host = document.getElementById("recent");
     var rows = state.recent || [];
-    if (!rows.length) {
-      host.innerHTML = '<div class="empty">Nothing logged yet.</div>';
-      return;
-    }
+    if (!rows.length) { host.innerHTML = '<div class="empty">Nothing logged yet.</div>'; return; }
     host.innerHTML = rows.map(function (q) {
       var time = q.when ? q.when.slice(11, 16) + "z" : "";
       return '<div class="qso">' +
-        '<span class="tag" style="background:' + q.color + '">' + q.team + '</span>' +
-        '<span class="call">' + q.call + '</span>' +
-        '<span style="color:var(--muted)">' + (q.grid || "") + '</span>' +
-        '<span class="meta">' + q.band + " " + q.mode + " " + time + '</span>' +
-      '</div>';
+        '<span class="tag" style="background:' + q.color + '">' + esc(q.team) + "</span>" +
+        '<span class="call">' + esc(q.call) + "</span>" +
+        '<span style="color:var(--muted)">' + esc(q.grid || "") + "</span>" +
+        '<span class="meta">' + esc(q.band) + " " + esc(q.mode) + " " + time + "</span></div>";
     }).join("");
   }
 
   function renderFoot() {
-    var t = state.totals || {};
-    var c = state.contest || {};
-    var bits = [
-      "<span><b>" + (t.qsos_scored || 0) + "</b> scoring contacts of <b>" + (t.qsos_seen || 0) + "</b> read</span>"
-    ];
-    var rejected = t.rejected || {};
-    Object.keys(rejected).forEach(function (reason) {
-      bits.push("<span><b>" + rejected[reason] + "</b> " + reason + "</span>");
+    var t = state.totals || {}, c = state.contest || {};
+    var bits = ["<span><b>" + (t.qsos_scored || 0) + "</b> scoring contacts of <b>" + (t.qsos_seen || 0) + "</b> read</span>"];
+    Object.keys(t.rejected || {}).forEach(function (reason) {
+      bits.push("<span><b>" + t.rejected[reason] + "</b> " + esc(reason) + "</span>");
     });
     if (c.bands && c.bands.length) { bits.push("<span>bands: " + c.bands.join(", ") + "</span>"); }
-    if (c.modes && c.modes.length) { bits.push("<span>modes: " + c.modes.join(", ") + "</span>"); }
     document.getElementById("foot").innerHTML = bits.join("");
+  }
+
+  /* ================================================================== *
+   * Wiring
+   * ================================================================== */
+
+  function ensureGeometry(view) {
+    if (view === "usmap" && !usGeo) {
+      return fetch(BASE + "/static/us-states.json").then(function (r) { return r.json(); })
+        .then(function (g) { usGeo = g; });
+    }
+    if (view === "globe" && !worldGeo) {
+      return fetch(BASE + "/static/world-land.json").then(function (r) { return r.json(); })
+        .then(function (g) { worldGeo = g; });
+    }
+    return Promise.resolve();
+  }
+
+  function applyView(view) {
+    currentView = view;
+    document.getElementById("map-panel").classList.toggle("hidden", view !== "usmap");
+    document.getElementById("globe-panel").classList.toggle("hidden", view !== "globe");
+    document.getElementById("cols").className =
+      "cols " + (view === "standings" ? "plain" : "with-visual");
   }
 
   function apply(snapshot) {
     state = snapshot;
     clockBase = { remaining: snapshot.contest.seconds_remaining, at: Date.now() };
     document.getElementById("title").textContent = snapshot.contest.name;
+    document.getElementById("mode-pill").textContent = snapshot.contest.mode_label || snapshot.contest.mode;
     document.title = snapshot.contest.name + " — Live Scoreboard";
+
+    applyView(snapshot.contest.view);
     renderStatus(true);
     renderStandings();
     renderRecent();
     renderFoot();
     renderClock();
+
+    ensureGeometry(snapshot.contest.view).then(function () {
+      if (snapshot.contest.view === "usmap") { renderMap(); }
+      if (snapshot.contest.view === "globe") { renderGlobe(); }
+    }).catch(function () { /* the standings still work without a map */ });
   }
 
   function connect() {
     var ws;
-    try {
-      ws = new WebSocket(socketURL());
-    } catch (e) {
-      return poll();
-    }
+    try { ws = new WebSocket(socketURL()); } catch (e) { return poll(); }
     ws.onopen = function () { retry = 1000; };
     ws.onmessage = function (ev) { apply(JSON.parse(ev.data)); };
     ws.onclose = function () {
       renderStatus(false);
-      // Back off to 15s so a scoreboard left up overnight doesn't hammer a
-      // server that isn't coming back.
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 15000);
     };
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
-  // Fallback for anywhere websockets don't survive the network path.
   function poll() {
-    fetch(apiURL())
-      .then(function (r) { return r.json(); })
-      .then(apply)
+    fetch(BASE + "/api/scoreboard").then(function (r) { return r.json(); }).then(apply)
       .catch(function () { renderStatus(false); })
       .finally(function () { setTimeout(poll, 5000); });
   }
 
+  wireGlobe();
   setInterval(renderClock, 1000);
   connect();
 })();

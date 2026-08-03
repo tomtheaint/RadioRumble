@@ -28,6 +28,35 @@ CHASERS = [
     "K4VHE", "AC4WW", "W4HIJ", "K3NOQ", "KF9UG", "WB0DHB", "N3JPV",
     "W1MKC", "K4UVU", "K7AMB", "N9FGH", "KI6BQ", "W5TXA", "N2LOM",
 ]
+
+# DX stations and roughly where they are, so the globe has something to plot
+# and DX mode has something to score. Grids are real for the country.
+DX_STATIONS = [
+    ("VE3ABC", "FN03"), ("VE7XYZ", "CN89"), ("VE1QQ", "FN75"),
+    ("XE1MEX", "EK09"), ("TI2CR", "EJ79"), ("HP1PAN", "FJ08"),
+    ("CO8LY", "FL20"), ("KP4XX", "FK68"), ("6Y5AB", "FK18"),
+    ("PY2ABC", "GG66"), ("LU3DX", "GF05"), ("CE3AA", "FF46"),
+    ("HK3QQ", "FJ24"), ("YV5BB", "FK60"), ("CX2CC", "GF15"),
+    ("G0ABC", "IO91"), ("GM4XYZ", "IO85"), ("EI4DD", "IO63"),
+    ("DL1ABC", "JO41"), ("F5XYZ", "JN18"), ("PA0RDT", "JO22"),
+    ("ON4AA", "JO20"), ("OE1ABC", "JN88"), ("HB9XX", "JN47"),
+    ("IK2ABC", "JN45"), ("EA3QQ", "JN11"), ("CT1AA", "IM58"),
+    ("SM5ABC", "JO89"), ("LA1XX", "JO59"), ("OZ1AA", "JO65"),
+    ("OH2BB", "KP20"), ("SP5XYZ", "KO02"), ("OK1ABC", "JO70"),
+    ("HA5QQ", "JN97"), ("YO3AA", "KN34"), ("LZ1BB", "KN12"),
+    ("SV1XX", "KM18"), ("9A1CC", "JN85"), ("UR5ABC", "KO50"),
+    ("UA3QQ", "KO85"), ("RA9XX", "MO06"), ("EA8AA", "IL18"),
+    ("TF3XX", "HP94"), ("JA1XYZ", "PM95"), ("JH8BB", "QN02"),
+    ("HL2AA", "PM37"), ("BV1QQ", "PL05"), ("BD4XX", "PM01"),
+    ("VU2ABC", "MK68"), ("9V1AA", "OJ11"), ("YB1XX", "OI33"),
+    ("DU1QQ", "PK04"), ("HS0AA", "OK03"), ("4X4BB", "KM72"),
+    ("A61XX", "LL75"), ("UN7AA", "MN69"), ("VK2DEF", "QF56"),
+    ("VK6XX", "OF78"), ("ZL1ABC", "RF73"), ("P29QQ", "QI20"),
+    ("KH6ABC", "BL11"), ("KL7AA", "BP51"), ("ZS6ABC", "KG44"),
+    ("CN8XX", "IM63"), ("5Z4BB", "KI88"),
+    ("TR8QQ", "JJ40"), ("9J2XX", "KH44"), ("V51AA", "JG87"), ("SU1AA", "KM59"),
+    ("3B8BB", "LG89"), ("VP8XX", "GD18"), ("OX3AA", "GP60"),
+]
 PREFIXES = ["K", "W", "N", "AA", "AB", "AC", "KB", "KC", "KD", "KE", "KF", "KI"]
 SUFFIXES = ["DX", "UV", "QK", "TX", "YY", "PT", "BF", "RA", "LM", "NB", "JT", "XP"]
 
@@ -79,8 +108,13 @@ def wrap_raw(record: str, rng: random.Random) -> str:
     )
 
 
-def build(contest, count: int, rng: random.Random, window) -> list[str]:
-    """Produce `count` records spread across the given window."""
+def build(contest, count: int, rng: random.Random, window, dx_share: float = 0.3) -> list[str]:
+    """Produce `count` records spread across the given window.
+
+    `dx_share` is the fraction of contacts made with stations outside the US.
+    A real collegiate log has plenty of them, and without them DX mode has
+    nothing to score and the globe has nothing to plot.
+    """
     teams = [t for t in contest.teams if t.callsigns]
     if not teams:
         sys.exit("contest.toml defines no teams with callsigns.")
@@ -114,6 +148,11 @@ def build(contest, count: int, rng: random.Random, window) -> list[str]:
             # Off-contest band — the sort of thing an operator does by accident.
             call = rng.choice(CHASERS)
             band = rng.choice(OFF_CONTEST_BANDS)
+        elif roll < 0.09 + dx_share:
+            # A DX station, carrying its own grid so the globe plots it in the
+            # right country rather than somewhere in Kansas.
+            call, grid = rng.choice(DX_STATIONS)
+            worked[team.abbr].add((call, band))
         else:
             call = rng.choice(CHASERS) if rng.random() < 0.45 else random_call(rng)
             worked[team.abbr].add((call, band))

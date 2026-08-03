@@ -141,17 +141,22 @@ def test_a_square_spanning_two_states_credits_both(board):
     assert board.teams["KSU"].states == {"Kansas", "Missouri"}
 
 
+def score_of(board, abbr):
+    """What the mode makes of a team's tally — the number the page shows."""
+    return board.mode.score_for(board.teams[abbr], board)
+
+
 def test_score_is_points_times_multipliers(board):
     board.add(qso(call="W1ABC", grid="EM19"))
     board.add(qso(call="W2ABC", grid="EN12"))
     assert board.teams["KSU"].points == 2
-    assert board.teams["KSU"].score == 4
+    assert score_of(board, "KSU") == 4
 
 
 def test_a_team_with_no_grids_still_scores_its_points(board):
     """Multipliers of zero would otherwise hold the first team at nil."""
     board.add(qso(grid=""))
-    assert board.teams["KSU"].score == 1
+    assert score_of(board, "KSU") == 1
 
 
 # -- standings -------------------------------------------------------------
