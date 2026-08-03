@@ -29,6 +29,7 @@ REJECT_BAND = "band not used in this contest"
 REJECT_MODE = "mode not used in this contest"
 REJECT_DUPE = "duplicate contact"
 REJECT_VOID = "voided by an official"
+REJECT_NIL = "not in the other operator's log"
 
 
 @dataclass
@@ -73,6 +74,11 @@ class TeamScore:
             "last_qso": self.last_qso.isoformat() if self.last_qso else None,
             "affiliation": self.team.affiliation,
             "grid": self.team.grid,
+            "logo": self.team.logo,
+            "description": self.team.description,
+            "gear": self.team.gear,
+            "members": list(self.team.members),
+            "website": self.team.website,
             "verified": self.verification[VERIFIED],
             "nil": self.verification[NIL],
             "unmatched": self.verification[UNMATCHED],
@@ -109,6 +115,9 @@ class Scoreboard:
         self.chaser_teams: dict[str, set[str]] = defaultdict(set)
         self.chaser_last: dict[str, datetime] = {}
         self.verification: Counter = Counter()
+        self.bonuses_applied: Counter = Counter()
+        self.penalties: int = 0
+        self.rules = contest.bonuses
 
         # Mode-owned state. Kept on the board rather than inside the mode so a
         # snapshot is one object and the mode itself stays stateless per QSO.
@@ -148,6 +157,23 @@ class Scoreboard:
             return REJECT_DUPE
         return self.mode.extra_reject(qso, team, self)
 
+    def points_for(self, qso: Qso, base: int | None = None, skip=()) -> int:
+        """What one contact is worth once every active modifier is applied.
+
+        Modes ask for this rather than reading qso_points directly, so a
+        bonus switched on in the configuration reaches every game at once.
+        """
+        from . import dxcc
+
+        base = self.contest.qso_points if base is None else base
+        if not self.rules.enabled:
+            return base
+        is_dx = dxcc.lookup(qso.call)[2]
+        points, applied = self.rules.evaluate(qso, base, is_dx, skip=skip)
+        for name in applied:
+            self.bonuses_applied[name] += 1
+        return points
+
     # -- accumulation -----------------------------------------------------
 
     def add(self, qso: Qso, status: str = UNMATCHED, void_reason: str = "") -> str | None:
@@ -164,6 +190,20 @@ class Scoreboard:
         if void_reason:
             self.rejected[REJECT_VOID] += 1
             return REJECT_VOID
+
+        # "Not in log" is the one status that can cost a team something, and
+        # only when an organiser has asked for it. The penalty is deliberately
+        # harsher than losing the contact: guessing at a half-copied callsign
+        # should be worse than not logging it at all.
+        if status == NIL and self.rules.nil_penalty:
+            team = self.contest.team_for(qso.station)
+            if team is not None:
+                self.teams[team.abbr].points -= self.rules.nil_penalty
+                self.teams[team.abbr].verification[NIL] += 1
+                self.verification[NIL] += 1
+                self.penalties += self.rules.nil_penalty
+            self.rejected[REJECT_NIL] += 1
+            return REJECT_NIL
 
         reason = self.check(qso)
         if reason is not None:

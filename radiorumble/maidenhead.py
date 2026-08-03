@@ -53,6 +53,34 @@ def to_latlon(locator: str) -> tuple[float, float] | None:
     return (round(lat, 4), round(lon, 4))
 
 
+def neighbours(square: str) -> list[str]:
+    """The eight squares touching this one.
+
+    Squares tile the world 2 degrees by 1, so a neighbour is one step in
+    either direction. Longitude wraps at the date line; latitude does not,
+    because there is nothing north of the pole.
+    """
+    position = to_latlon(square)
+    if position is None:
+        return []
+    lat, lon = position
+    out = []
+    for dlat in (-1, 0, 1):
+        for dlon in (-2, 0, 2):
+            if dlat == 0 and dlon == 0:
+                continue
+            nlat = lat + dlat
+            nlon = lon + dlon
+            if not -90 <= nlat < 90:
+                continue
+            if nlon >= 180:
+                nlon -= 360
+            elif nlon < -180:
+                nlon += 360
+            out.append(to_square(nlat, nlon))
+    return sorted(set(out))
+
+
 def to_square(lat: float, lon: float) -> str:
     """The 4-character square containing a position. Inverse of to_latlon."""
     lon = min(179.999, max(-180.0, lon)) + 180.0

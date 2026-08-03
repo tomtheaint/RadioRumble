@@ -18,7 +18,7 @@ station callsigns; every contact logged by a rostered station scores for that
 school. Everything else in the log — and at a real event that is most of it —
 belongs to the rest of the world and is ignored.
 
-## Three games
+## Six games
 
 Same log, same teams, same clock. What changes is what a contact is *worth*.
 Set `mode` in [`contest.toml`](contest.toml), or override it for a demo with
@@ -66,6 +66,29 @@ plain conquest, where the cheap easy states are as good as any.
 States never change hands in this mode. A price agreed at the claim would mean
 nothing if the state could be taken afterwards.
 
+### `connect` — four in a row
+
+Territory only counts when it touches territory you already hold. Twelve
+states scattered across the country are worth nothing; four in a row are worth
+everything. Score is the size of your largest unbroken run, and reaching
+`target` wins outright.
+
+This is the mode that makes people look at the map before calling CQ — the
+nearest unclaimed state stops being an afterthought and becomes the only thing
+worth chasing.
+
+### `traverse` — cross the country
+
+An unbroken chain of held states from one side to the other. `axis =
+"east-west"` runs Pacific to Atlantic; `"north-south"` runs the Canadian
+border to the Gulf. The shortest possible crossings are **seven states** and
+**three** respectively, so neither is a formality.
+
+Until somebody completes it, score is the longest chain still reaching back to
+the starting coast — partial progress, rather than a scoreboard of zeroes for
+most of the afternoon. A completed crossing beats any amount of progress, and
+a shorter crossing beats a longer one.
+
 ### `dx` — reach, drawn on a globe
 
 Only contacts outside the United States count, and the multiplier is
@@ -78,8 +101,14 @@ Every contact is plotted on a rotating orthographic globe, positioned from its
 grid square. Drag to spin it; it drifts on its own if left alone.
 
 US territories count as DX even though `KH6` and `KP4` look domestic — they are
-separate DXCC entities. Callsigns are resolved by prefix, and a portable
-indicator names where the operator actually is, so `W1ABC/VE3` is Canada.
+separate DXCC entities.
+
+Countries come from **`cty.dat`**, the country file every contest program
+uses, bundled in `static/`. It is worth having over a hand-written prefix
+table: it knows that `UA9X` is European Russia while `UA9A` is Asiatic because
+the Urals straddle the continental divide, and it carries some twenty thousand
+individual callsigns that are exceptions to their own prefix. Drop in a newer
+copy from country-files.com whenever you like — nothing else has to change.
 
 ## Setting up a contest
 
@@ -89,7 +118,7 @@ block; it is never a code change.
 ```toml
 [contest]
 name  = "Radio Rumble"
-mode  = "conquest"                # classic | conquest | dx
+mode  = "conquest"   # classic | conquest | scarcity | connect | traverse | dx
 start = 2026-09-12T18:00:00Z      # both UTC; omit for an open contest
 end   = 2026-09-12T20:00:00Z
 log_file = "mock_contest_log.txt"
@@ -138,6 +167,41 @@ Every rejection is counted and shown under the scoreboard. At a live event
 and an answer of *dupe on 20m* ends the conversation where a silent drop
 starts an argument.
 
+## Two boards
+
+`conquest`, `scarcity` and `connect` accept `territory`:
+
+- **`"state"`** — 51 pieces, borders everyone can picture, and a contact often
+  claims two at once because a grid square is bigger than a state line.
+- **`"grid"`** — 683 squares over the same country, each claimed
+  unambiguously. A far longer game, and much more about coverage than luck.
+
+`traverse` is states only: a grid board has no coastline.
+
+## Scoring modifiers
+
+Every one is optional and they stack. Nothing is on by default except the DX
+bonus, because a modifier nobody asked for that quietly changes a score is
+worse than no modifier at all.
+
+| Setting | Effect |
+|---|---|
+| `dx` | Extra points outside the home country |
+| `qrp` / `qrp_watts` | The other station logged low power (`TX_PWR`) |
+| `pota_sota` | A park or summit reference in `SIG` or `COMMENT` |
+| `special_event` | A callsign listed in `special_calls` |
+| `technician_band` | 10m, 6m, 2m, 1.25m, 70cm — bands a new licensee has |
+| `ft4_multiplier` | `0.5` makes an FT4 contact worth half an FT8 one |
+| `nil_penalty` | Points *deducted* for a contact the other log lacks |
+
+Everything is read out of the log itself, so nothing has to be declared
+separately. The FT4 multiplier scales the total *after* the additions, so a
+bonus-laden FT4 contact is still worth half of the same contact on FT8.
+
+`nil_penalty` is deliberately harsher than simply losing the contact: guessing
+at a half-copied callsign should cost more than not logging it at all. It is
+off by default — it only makes sense once most entrants are submitting logs.
+
 ## Who is competing
 
 `compete_as = "team"` puts schools against each other. `compete_as = "operator"`
@@ -150,6 +214,10 @@ dots on a map are two dots you can tell apart.
 Give each entrant a `grid` and their station is drawn on the map and the globe.
 That is worth doing: seeing your own dot next to the states you *haven't* taken
 is how a team decides which one to chase next.
+
+Teams carry more than a colour. `description`, `gear`, `members`, `website`
+and `logo` all appear on the team card — a club station is one callsign and a
+dozen people, and the people are the part worth putting on a scoreboard.
 
 ## Chasers
 
@@ -233,6 +301,24 @@ something to depend on.
 
 ## Feeding it a log
 
+### Live, from WSJT-X
+
+```bash
+python rec.py --split           # one file per station, which cross-checking needs
+```
+
+Point WSJT-X at this machine under **Reporting → UDP Server**, port 2237.
+Every time an operator presses Log, the contact arrives as a UDP datagram, is
+decoded, and appended as ADIF — so a live station and a mailed-in file are
+indistinguishable by the time they reach the scoreboard. Several instances can
+report to one server, which is what a multi-operator team wants.
+
+`rec.py` used to write the hex of every packet and nothing else, recording that
+something had happened without recording what. The bytes are still available
+with `--raw` when a datagram needs looking at.
+
+### From files
+
 Point `log_file` at whatever your setup writes. Two shapes are understood:
 
 - **Plain ADIF** — what WSJT-X, N1MM and friends produce.
@@ -273,7 +359,11 @@ radiorumble/
   scoring.py            Qso records -> per-entrant scores (mode-independent)
   modes.py              what a contact is worth: classic, conquest, scarcity, dx
   maidenhead.py         grid square -> latitude and longitude
-  dxcc.py               callsign prefix -> country and continent
+  territory.py          the board: what a contact claims, what touches what
+  bonuses.py            the optional scoring modifiers
+  dxcc.py               callsign -> country, via cty.dat
+  cty.py                the cty.dat parser
+  wsjtx.py              decodes WSJT-X's UDP datagrams
   store.py              every contact held, plus the void list
   verify.py             one log checked against another
   ingest.py             watches the logs, reads each byte once
@@ -282,8 +372,11 @@ templates/admin.html    the review screen
 static/
   us-states.json        50 states + DC, Natural Earth
   world-land.json       world coastline, Natural Earth
+  adjacency.json        which states border which, generated
+  cty.dat               the DXCC country file
 grid.txt                grid square -> state, generated by tools/build_grid.py
 tools/build_grid.py     regenerates grid.txt from the state boundaries
+tools/build_adjacency.py  regenerates the neighbour graph
 createLog.py            mock log generator
 rec.py                  raw WSJT-X UDP listener
 tests/

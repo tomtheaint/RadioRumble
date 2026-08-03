@@ -64,7 +64,7 @@ class ClassicMode(Mode):
     view = "standings"
 
     def award(self, qso, team, score, board) -> None:
-        score.points += board.contest.qso_points
+        score.points += board.points_for(qso)
         square = qso.square
         if square:
             score.squares.add(square)
@@ -101,21 +101,35 @@ class ConquestMode(Mode):
     def __init__(self, settings=None) -> None:
         super().__init__(settings)
         self.claim = self.settings.get("claim", "first")
+        # "state" is the familiar board; "grid" is 683 squares over the same
+        # country, which turns the same game into one about coverage.
+        self.territory_kind = self.settings.get("territory", "state")
+
+    def board_map(self, board):
+        """The territory board, built once per scoreboard."""
+        from .territory import TerritoryMap
+
+        cached = getattr(board, "_territory_map", None)
+        if cached is None or cached.kind != self.territory_kind:
+            cached = TerritoryMap(self.territory_kind, board.contest.grid_states)
+            cached.set_edges(self.settings.get("edges", {}) or {})
+            board._territory_map = cached
+        return cached
 
     def extra_reject(self, qso, team, board) -> str | None:
-        # A contact that cannot be placed in a state cannot take territory.
+        # A contact that cannot be placed on the board cannot take territory.
         # It is not an error — most of a real log is elsewhere — so it is
         # reported as a reason rather than dropped silently.
-        if not board.contest.states_for(qso.square):
+        if not self.board_map(board).claimed_by(qso.square):
             return REJECT_NOT_US
         return None
 
     def award(self, qso, team, score, board) -> None:
-        score.points += board.contest.qso_points
+        score.points += board.points_for(qso)
         square = qso.square
         score.squares.add(square)
 
-        for state in board.contest.states_for(square):
+        for state in self.board_map(board).claimed_by(square):
             score.state_contacts[state] += 1
             score.states.add(state)
             self._resolve(state, team, qso.when, board)
@@ -154,9 +168,8 @@ class ConquestMode(Mode):
                 "owners": dict(board.owners),
                 "colors": colors,
                 "claim_rule": self.claim,
-                "total_states": len(
-                    {s for states in board.contest.grid_states.values() for s in states}
-                ),
+                "territory": self.territory_kind,
+                "total_states": self.board_map(board).total,
             }
         }
 
@@ -189,7 +202,9 @@ class DxMode(Mode):
 
     def award(self, qso, team, score, board) -> None:
         country, continent, is_dx = dxcc.lookup(qso.call)
-        score.points += self.points_per_dx if is_dx else board.contest.qso_points
+        # The DX rate replaces the base rate; bonuses still stack on top.
+        base = self.points_per_dx if is_dx else board.contest.qso_points
+        score.points += board.points_for(qso, base=base, skip=("DX",))
         if is_dx and country != dxcc.UNKNOWN:
             score.entities.add(country)
         if continent:
@@ -273,9 +288,8 @@ class ScarcityMode(ConquestMode):
             }
         )
 
-    @staticmethod
-    def _total_states(board) -> int:
-        return len({s for states in board.contest.grid_states.values() for s in states})
+    def _total_states(self, board) -> int:
+        return self.board_map(board).total
 
     def score_for(self, score, board) -> int:
         return sum(
@@ -301,11 +315,147 @@ class ScarcityMode(ConquestMode):
         return extras
 
 
+class ConnectMode(ConquestMode):
+    """Territory only counts when it touches territory you already hold.
+
+    Twelve states scattered across the country are worth nothing here and four
+    in a row are worth everything, which turns the game from a scramble for
+    whatever answers into something you have to plan. The nearest unclaimed
+    state stops being an afterthought and becomes the only thing worth
+    chasing.
+
+    Score is the size of the largest unbroken run somebody holds. Reaching
+    ``target`` wins it outright; the scoreboard says who got there first.
+    """
+
+    key = "connect"
+    label = "Connect"
+    view = "usmap"
+
+    def __init__(self, settings=None) -> None:
+        super().__init__(settings)
+        self.target = int(self.settings.get("target", 4))
+
+    def _held(self, board, abbr: str) -> set[str]:
+        return {s for s, owner in board.owners.items() if owner == abbr}
+
+    def score_for(self, score, board) -> int:
+        held = self._held(board, score.team.abbr)
+        if not held:
+            return 0
+        return len(self.board_map(board).largest_group(held))
+
+    def team_extras(self, score, board) -> dict:
+        held = self._held(board, score.team.abbr)
+        run = self.board_map(board).largest_group(held) if held else []
+        return {
+            "owned": sorted(held),
+            "owned_count": len(held),
+            "run": run,
+            "run_length": len(run),
+            "complete": len(run) >= self.target,
+        }
+
+    def snapshot_extras(self, board) -> dict:
+        extras = super().snapshot_extras(board)
+        runs = {}
+        winners = []
+        for abbr in board.teams:
+            held = self._held(board, abbr)
+            run = self.board_map(board).largest_group(held) if held else []
+            runs[abbr] = run
+            if len(run) >= self.target:
+                winners.append(abbr)
+        extras["map"]["runs"] = runs
+        extras["connect"] = {"target": self.target, "winners": winners}
+        return extras
+
+
+class TraverseMode(ConquestMode):
+    """Cross the country: an unbroken chain of held states, coast to coast.
+
+    ``axis = "east-west"`` runs Pacific to Atlantic, ``"north-south"`` runs the
+    Canadian border to the Gulf and Mexico. The shortest possible crossing is
+    seven states one way and three the other, so neither is a formality, and
+    both reward looking at the map before calling CQ.
+
+    Until somebody completes it the score is the longest chain that still
+    reaches back to the starting coast — partial progress towards a crossing,
+    rather than a scoreboard of zeroes for most of the afternoon.
+
+    States only. Where a crossing starts and stops is declared per side in
+    static/adjacency.json, and a grid-square board has no coasts.
+    """
+
+    key = "traverse"
+    label = "Traverse"
+    view = "usmap"
+
+    AXES = {
+        "east-west": ("west", "east"),
+        "west-east": ("west", "east"),
+        "north-south": ("north", "south"),
+        "south-north": ("south", "north"),
+    }
+
+    def __init__(self, settings=None) -> None:
+        super().__init__(settings)
+        self.territory_kind = "state"     # a grid board has no coastline
+        self.axis = self.settings.get("axis", "east-west")
+        self.start_side, self.end_side = self.AXES.get(self.axis, ("west", "east"))
+        # A completed crossing is worth more than any amount of progress.
+        self.bonus = int(self.settings.get("crossing_points", 1000))
+
+    def _held(self, board, abbr: str) -> set[str]:
+        return {s for s, owner in board.owners.items() if owner == abbr}
+
+    def score_for(self, score, board) -> int:
+        held = self._held(board, score.team.abbr)
+        if not held:
+            return 0
+        territory = self.board_map(board)
+        crossing = territory.crossing(held, self.start_side, self.end_side)
+        if crossing:
+            # Shorter crossings are better: a tighter line is a better line.
+            return self.bonus - len(crossing)
+        return territory.best_progress(held, self.start_side, self.end_side)
+
+    def team_extras(self, score, board) -> dict:
+        held = self._held(board, score.team.abbr)
+        territory = self.board_map(board)
+        crossing = territory.crossing(held, self.start_side, self.end_side) if held else []
+        return {
+            "owned": sorted(held),
+            "owned_count": len(held),
+            "crossing": crossing,
+            "crossed": bool(crossing),
+            "reach": territory.best_progress(held, self.start_side, self.end_side) if held else 0,
+        }
+
+    def snapshot_extras(self, board) -> dict:
+        extras = super().snapshot_extras(board)
+        territory = self.board_map(board)
+        crossings = {}
+        for abbr in board.teams:
+            held = self._held(board, abbr)
+            crossings[abbr] = territory.crossing(held, self.start_side, self.end_side) if held else []
+        extras["map"]["crossings"] = crossings
+        extras["traverse"] = {
+            "axis": self.axis,
+            "from": list(territory.edge(self.start_side)),
+            "to": list(territory.edge(self.end_side)),
+            "winners": [a for a, c in crossings.items() if c],
+        }
+        return extras
+
+
 MODES: dict[str, type[Mode]] = {
     "classic": ClassicMode,
     "conquest": ConquestMode,
     "dx": DxMode,
     "scarcity": ScarcityMode,
+    "connect": ConnectMode,
+    "traverse": TraverseMode,
 }
 
 

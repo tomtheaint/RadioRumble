@@ -116,8 +116,11 @@ def test_a_portable_indicator_names_where_the_operator_is():
 
 
 def test_meaningless_suffixes_do_not_change_the_country():
+    """Compared against the bare callsign, not a fixed name — cty.dat's
+    official spellings are its own business ("Fed. Rep. of Germany")."""
     assert dxcc.country("K5XYZ/QRP") == "United States"
-    assert dxcc.country("DL1ABC/P") == "Germany"
+    assert dxcc.country("DL1ABC/P") == dxcc.country("DL1ABC")
+    assert dxcc.country("DL1ABC") != dxcc.UNKNOWN
 
 
 def test_an_unrecognised_prefix_is_dx_rather_than_dropped():
@@ -217,7 +220,7 @@ def test_countries_are_the_multiplier_not_grid_squares():
     board = board_for("dx")
     board.add(qso(call="DL1ABC", grid="JO41"))
     board.add(qso(call="DL2ABC", grid="JO41"))
-    assert board.teams["KSU"].entities == {"Germany"}
+    assert board.teams["KSU"].entities == {dxcc.country("DL1ABC")}
     assert board.standings()[0]["entities"] == 1
 
 

@@ -67,6 +67,34 @@ match_minutes = 3
 
 
 #  ---------------------------------------------------------------------------
+#  Scoring modifiers. Every one is optional and they stack. Nothing is on by
+#  default except the DX bonus -- a modifier nobody asked for that quietly
+#  changes a score is worse than no modifier at all.
+#
+#  Values are read out of the log itself: TX_PWR for QRP, SIG/COMMENT for park
+#  and summit references, MODE for FT4, BAND for the Technician allocations.
+#  ---------------------------------------------------------------------------
+
+[bonuses]
+enabled = true
+
+dx = 2                 # extra points for a contact outside the home country
+qrp = 0                # the other station logged 20 W or less
+qrp_watts = 20
+pota_sota = 0          # POTA/SOTA/WWFF/IOTA named in the log
+special_event = 0      # a callsign listed in special_calls below
+technician_band = 0    # 10m, 6m, 2m, 1.25m, 70cm
+ft4_multiplier = 1.0   # 0.5 makes an FT4 contact worth half an FT8 one
+
+#  Deducted when the other operator submitted a log and this contact is not
+#  in it. Deliberately harsher than simply losing the contact: guessing at a
+#  half-copied callsign should cost more than not logging it at all.
+nil_penalty = 0
+
+special_calls = []
+
+
+#  ---------------------------------------------------------------------------
 #  Per-mode settings. Only the table matching `mode` above is read.
 #  ---------------------------------------------------------------------------
 
@@ -100,6 +128,28 @@ count_domestic = false
 base_points = 10
 step_points = 5
 
+[connect]
+#  Territory only counts when it touches territory you already hold. Twelve
+#  scattered states are worth nothing; four in a row are worth everything.
+#  Score is the largest unbroken run; reaching `target` wins outright.
+target = 4
+territory = "state"    # "state" (51 pieces) or "grid" (683 squares)
+
+[traverse]
+#  Cross the country with an unbroken chain of held states.
+#    "east-west"    Pacific to Atlantic  -- 7 states at the very least
+#    "north-south"  Canada to the Gulf   -- 3 at the very least
+axis = "east-west"
+crossing_points = 1000
+
+#  Where a crossing starts and stops. Declared rather than computed: it is a
+#  rules decision, and every geometric rule that looks reasonable puts the
+#  District of Columbia on all four sides of the country. Defaults live in
+#  static/adjacency.json; uncomment to override.
+# [traverse.edges]
+# west = ["California", "Oregon", "Washington"]
+# east = ["Maine", "New Hampshire", "Massachusetts"]
+
 
 #  ---------------------------------------------------------------------------
 #  Teams. `callsigns` lists the station callsigns your operators log under —
@@ -116,6 +166,11 @@ abbr = "KSU"
 color = "#512888"
 callsigns = ["KE0VUM"]
 grid = "EM19"
+description = "The K-State Amateur Radio Club, operating from Manhattan."
+gear = "IC-7300 into a 40m dipole at 30 ft"
+members = ["Tom", "Alex", "Priya"]
+website = "https://www.k-state.edu/"
+# logo = "logos/ksu.png"    # a URL, or a path under static/
 
 [[teams]]
 name = "University of Kansas"

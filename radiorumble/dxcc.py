@@ -227,13 +227,64 @@ def base_call(callsign: str) -> str:
     return b if len(b) < len(a) else a
 
 
-def lookup(callsign: str) -> tuple[str, str, bool]:
+# cty.dat, if it is there. Loaded once — parsing 350KB on every contact would
+# be a poor trade for a file that changes a few times a year.
+_CTY = None
+_CTY_LOADED = False
+
+#: The entity a contact has to be outside of to count as DX. A contest run
+#: from anywhere else only has to change this.
+HOME_ENTITY = "United States"
+
+
+def table():
+    """The cty.dat table, loaded on first use. Empty if the file is absent."""
+    global _CTY, _CTY_LOADED
+    if not _CTY_LOADED:
+        from .cty import CtyLookup
+
+        _CTY = CtyLookup.load()
+        _CTY_LOADED = True
+    return _CTY
+
+
+def lookup(callsign: str, home: str = "") -> tuple[str, str, bool]:
     """Return (country, continent, is_dx) for a callsign.
 
-    ``is_dx`` is from a United States point of view: anything that is not a
-    mainland US callsign counts, including US territories, which are separate
-    DXCC entities even though KP4 and KH6 look domestic.
+    ``is_dx`` means "outside the home entity". US territories count, because
+    KP4 and KH6 are separate DXCC entities even though they look domestic.
+
+    cty.dat answers this when present. The built-in table below is the
+    fallback, and it is genuinely worse: it has no idea that UA9X is European
+    Russia while UA9A is Asiatic, or that a couple of hundred individual
+    callsigns are exceptions to their own prefix.
     """
+    home = home or HOME_ENTITY
+    cty = table()
+    if cty:
+        entity = cty.lookup(callsign)
+        if entity is not None:
+            return (entity.name, entity.continent, entity.name != home)
+        return (UNKNOWN, "", True)
+
+    return _builtin_lookup(callsign, home)
+
+
+def position(callsign: str) -> tuple[float, float] | None:
+    """Roughly where a callsign is, from cty.dat.
+
+    A fallback for the globe: a contact whose log carries no grid square can
+    still be plotted at the centre of its country, which is better than
+    leaving it off the map entirely.
+    """
+    cty = table()
+    if not cty:
+        return None
+    entity = cty.lookup(callsign)
+    return entity.position if entity else None
+
+
+def _builtin_lookup(callsign: str, home: str) -> tuple[str, str, bool]:
     call = base_call(callsign)
     if not call:
         return (UNKNOWN, "", True)
@@ -248,7 +299,7 @@ def lookup(callsign: str) -> tuple[str, str, bool]:
 
     for prefix in _US:
         if call.startswith(prefix):
-            return ("United States", "NA", False)
+            return ("United States", "NA", home != "United States")
 
     return (UNKNOWN, "", True)
 

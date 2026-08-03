@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .bonuses import BonusRules
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / "contest.toml"
 DEFAULT_GRIDS = BASE_DIR / "grid.txt"
@@ -26,6 +28,16 @@ class Team:
     #: Set when a single operator has been split out of a school, so the page
     #: can still show who they are competing for.
     affiliation: str = ""
+    #: Shown on the team card. `logo` is a URL or a path under static/ — kept
+    #: as a plain string so a club can point at whatever it already has.
+    logo: str = ""
+    description: str = ""
+    gear: str = ""
+    #: Who is operating, as opposed to which callsigns they log under. A club
+    #: station is one callsign and a dozen people, and the people are the part
+    #: worth putting on a scoreboard.
+    members: tuple[str, ...] = ()
+    website: str = ""
     #: Where the station is. Drawn on the map and the globe so a team can see
     #: what it has and has not reached, which is the whole basis of deciding
     #: which state to chase next.
@@ -64,6 +76,8 @@ class Contest:
     #: Clocks drift and loggers round differently; FT8 transmissions are 15
     #: seconds, so a couple of minutes is generous without being meaningless.
     match_minutes: int = 3
+    #: Scoring modifiers. Every one is optional and they stack.
+    bonuses: "BonusRules" = None  # type: ignore[assignment]
 
     def build_mode(self):
         """The scoring rules for this contest. Imported late to avoid a cycle."""
@@ -77,6 +91,10 @@ class Contest:
         self._by_callsign = {
             call.upper(): team for team in self.teams for call in team.callsigns
         }
+        if self.bonuses is None:
+            from .bonuses import BonusRules
+
+            self.bonuses = BonusRules()
 
     def team_for(self, callsign: str) -> Team | None:
         """Which team a logging station belongs to, or None if unrostered.
@@ -195,6 +213,9 @@ def split_into_operators(teams: tuple[Team, ...]) -> tuple[Team, ...]:
                     callsigns=(call,),
                     affiliation=team.name,
                     grid=team.grid,
+                    logo=team.logo,
+                    gear=team.gear,
+                    website=team.website,
                 )
             )
             index += 1
@@ -213,6 +234,11 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
             color=t.get("color", "#666666"),
             callsigns=tuple(c.upper() for c in t.get("callsigns", [])),
             grid=str(t.get("grid", "")).upper(),
+            logo=t.get("logo", ""),
+            description=t.get("description", ""),
+            gear=t.get("gear", ""),
+            members=tuple(t.get("members", [])),
+            website=t.get("website", ""),
         )
         for t in data.get("teams", [])
     )
@@ -253,4 +279,5 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
         log_dir=log_dir or None,
         compete_as=compete_as,
         match_minutes=int(contest.get("match_minutes", 3)),
+        bonuses=BonusRules.from_config(data.get("bonuses")),
     )
