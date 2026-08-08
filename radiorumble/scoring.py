@@ -310,16 +310,52 @@ class Scoreboard:
 
     # -- output -----------------------------------------------------------
 
-    def standings(self) -> list[dict]:
-        """Teams sorted the way a scoreboard is read: leader first."""
-        rows = [score.as_dict(self) for score in self.teams.values()]
-        rows.sort(key=lambda r: (r["score"], r["qsos"], r["multipliers"]), reverse=True)
-        for position, row in enumerate(rows, start=1):
-            row["position"] = position
+    def standings(self, limit: int = 0, offset: int = 0,
+                  query: str = "") -> list[dict]:
+        """Entries sorted the way a scoreboard is read: leader first.
+
+        `limit` is what keeps a free-for-all affordable. Five schools is a
+        list; three thousand callsigns is 1.4MB of JSON pushed down the
+        websocket every time the log grows, which is the actual limit on how
+        many people can enter. Positions are worked out over the whole field
+        before the slice, so row 400 still says 400.
+        """
+        # Ranked on the cheap parts first, and only the rows that are going to
+        # be sent are built. as_dict pulls in every band, mode, operator and
+        # bonus an entry has; doing that for ten thousand people to show
+        # fifteen of them is most of the cost of a snapshot.
+        ranked = sorted(
+            self.teams.values(),
+            key=lambda s: (self.mode.score_for(s, self), s.qsos, s.multipliers),
+            reverse=True,
+        )
+        places = {score.team.abbr: place for place, score in enumerate(ranked, start=1)}
+
+        if query:
+            needle = query.strip().upper()
+            ranked = [s for s in ranked
+                      if needle in s.team.abbr.upper() or needle in s.team.name.upper()]
+        if offset:
+            ranked = ranked[offset:]
+        if limit:
+            ranked = ranked[:limit]
+
+        rows = []
+        for score in ranked:
+            row = score.as_dict(self)
+            # Its place in the whole field, not in the slice: row 400 says 400.
+            row["position"] = places[score.team.abbr]
+            rows.append(row)
         return rows
 
-    def snapshot(self) -> dict:
-        """Everything the scoreboard page needs, in one JSON-ready object."""
+    def snapshot(self, limit: int = 0) -> dict:
+        """Everything the scoreboard page needs, in one JSON-ready object.
+
+        `limit` caps the standings. The rest of the field is still scored, still
+        holds territory and still counts towards every total on the page — it
+        is only the list of rows that is shortened, and `entrants` says by how
+        much so the page can be honest about it.
+        """
         contest = self.contest
         payload = {
             "contest": {
@@ -336,7 +372,8 @@ class Scoreboard:
                 "server_time": datetime.now(timezone.utc).isoformat(),
                 "compete_as": contest.compete_as,
             },
-            "standings": self.standings(),
+            "standings": self.standings(limit=limit),
+            "entrants": len(self.teams),
             "recent": list(self.recent),
             "chasers": self.chaser_board(),
             "homes": [

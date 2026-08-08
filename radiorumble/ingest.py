@@ -147,9 +147,9 @@ class ContestIngest:
         with self.lock:
             self._rebuild()
 
-    def snapshot(self) -> dict:
+    def snapshot(self, limit: int = 0) -> dict:
         with self.lock:
-            return self.scoreboard.snapshot()
+            return self.scoreboard.snapshot(limit=limit)
 
     # -- admin ------------------------------------------------------------
 

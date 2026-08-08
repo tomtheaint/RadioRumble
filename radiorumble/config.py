@@ -112,6 +112,10 @@ class Contest:
     listener: dict = field(default_factory=dict)
     #: The fixture list, if there is one. Empty means everybody plays today.
     matches: tuple = ()
+    #: How many rows the scoreboard shows. The rest of the field is still
+    #: scored and still holds territory; only the list is shortened, because
+    #: the list is what gets pushed down a websocket on every log line.
+    standings_limit: int = 15
     #: "team"     schools against each other.
     #: "operator" every rostered callsign as its own entry — a club running a
     #:            contest among its own members. Still needs a roster.
@@ -205,13 +209,18 @@ class Contest:
         entrant = Team(
             name=call,
             abbr=call,
-            # Cycled rather than random so the same field gets the same
-            # colours on a reload, which matters when the map is the
-            # scoreboard.
-            color=OPERATOR_COLORS[len(self.teams) % len(OPERATOR_COLORS)],
+            # Taken from the callsign rather than from a counter: the order
+            # people are admitted in depends on the order the logs are read,
+            # and a field that repaints itself because a file was re-read is
+            # unreadable when the map *is* the scoreboard.
+            color=color_for(call),
             callsigns=(call,),
         )
-        self.teams = tuple(self.teams) + (entrant,)
+        # A list, not a tuple: three thousand admissions rebuilding a tuple
+        # each time is three thousand copies of a growing list.
+        if not isinstance(self.teams, list):
+            self.teams = list(self.teams)
+        self.teams.append(entrant)
         self._by_callsign[call] = entrant
         return entrant
 
@@ -309,6 +318,20 @@ OPERATOR_COLORS = (
     "#4da3ff", "#3fd07f", "#ffc857", "#ff7a59", "#a371f7", "#ff5ea8",
     "#2dd4bf", "#c0d13a", "#8ab4ff", "#f0883e", "#7ee787", "#d2a8ff",
 )
+
+
+def color_for(callsign: str) -> str:
+    """A stable colour for a callsign nobody chose one for.
+
+    Hashed rather than counted so it depends on who they are and not on when
+    they turned up — the logs are re-read from scratch whenever anything
+    changes, and an entrant whose colour moved because a file was rotated is
+    an entrant nobody can follow on a map.
+    """
+    import hashlib
+
+    digest = hashlib.sha1(callsign.upper().encode()).digest()
+    return OPERATOR_COLORS[digest[0] % len(OPERATOR_COLORS)]
 
 
 def split_into_operators(teams: tuple[Team, ...]) -> tuple[Team, ...]:
@@ -443,6 +466,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
         log_dir=log_dir or None,
         listener=data.get("listener", {}) if isinstance(data.get("listener"), dict) else {},
         matches=_load_matches(data.get("matches")),
+        standings_limit=int(contest.get("standings_limit", 15) or 0),
         compete_as=compete_as,
         match_minutes=int(contest.get("match_minutes", 3)),
         bonuses=BonusRules.from_config(data.get("bonuses")),

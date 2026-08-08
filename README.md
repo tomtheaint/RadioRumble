@@ -249,6 +249,43 @@ A rostered event still keeps the world out, which is the invariant the
 standings depend on: at a collegiate event most of the log is contacts with
 people who never entered.
 
+### How many people can enter
+
+As many as turn up. **Nobody is capped — only the list is.**
+
+Scoring is not the constraint: 60,000 contacts across 3,000 entrants is under
+two seconds, and the whole thing is rebuilt from scratch on every change. What
+did not scale was the *payload*. The scoreboard pushes a full snapshot down the
+websocket every time the log grows, and a table of three thousand callsigns is
+1.4MB a time.
+
+So `standings_limit` (default 15) caps the rows that are sent:
+
+| Entrants | Payload sent | Snapshot |
+|---|---|---|
+| 250 | 21 KB | 0.03s |
+| 1,000 | 21 KB | 0.13s |
+| 3,000 | 21 KB | 0.23s |
+| 10,000 | 21 KB | 0.54s |
+
+Flat, because the size of the field stopped being in it. Three things had to be
+true for that:
+
+- **The map carries only the colours it uses.** It used to carry one per
+  entrant, which would have moved the problem rather than fixed it — a
+  territory board is bounded by the board, not by the field.
+- **Only the rows being sent are built.** `as_dict` pulls in every band, mode,
+  operator and bonus an entry has; doing that for ten thousand people to show
+  fifteen was most of the cost of a snapshot.
+- **A position is a position in the whole field.** Row 400 says 400, or the cap
+  turns a leaderboard into a lie.
+
+Everybody below the cut is still scored, still holds territory, still counts
+towards every total on the page — and can still find themselves:
+`/api/standings?q=` serves the whole table, searchable, and the page asks for it
+only when somebody types. Set `standings_limit = 0` to send everyone, which is
+the right answer for a handful of schools.
+
 Give each entrant a `grid` and their station is drawn on the map and the globe.
 That is worth doing: seeing your own dot next to the states you *haven't* taken
 is how a team decides which one to chase next.
@@ -584,6 +621,7 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/ws` | Websocket; pushes a full snapshot whenever a log grows |
 | `/api/scoreboard` | The same snapshot over HTTP, for anything that would rather poll |
 | `/api/board` | The pieces of the board and where they are. Fetched once by the page |
+| `/api/standings` | The whole field, paged and searchable, for everyone below the cut |
 | `/check` | “Is it hearing me?” — public, for operators setting up |
 | `/api/stations` | Who the listener has heard from. Public, minus the addresses |
 | `/submit` · `/api/submit` | Hand in a full log after the contest. Public |

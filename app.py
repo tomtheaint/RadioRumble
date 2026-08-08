@@ -68,7 +68,7 @@ def _snapshot() -> dict:
     somebody running the event looks at first, so it travels with the payload
     that is already being pushed.
     """
-    payload = ingest.snapshot()
+    payload = ingest.snapshot(limit=contest.standings_limit)
     live = {row["call"].upper() for row in listener.stations() if row["live"]}
     on_air = {team.abbr for team in contest.teams
               if any(call.upper() in live for call in team.callsigns)}
@@ -413,6 +413,24 @@ async def submit_log(file: UploadFile = File(...),
             "file": target.name,
         }
     )
+
+
+@app.get("/api/standings")
+async def standings(limit: int = 100, offset: int = 0, q: str = "") -> JSONResponse:
+    """The whole field, for when the top of it is not the part you want.
+
+    The scoreboard pushes only its first rows, because a free-for-all with
+    three thousand callsigns is 1.4MB of JSON on every log line. Everybody
+    below that still needs to be able to find themselves, so the rest of the
+    table is here, searchable, and asked for only when somebody asks.
+    """
+    limit = max(1, min(int(limit or 100), 500))
+    with ingest.lock:
+        rows = ingest.scoreboard.standings(limit=limit, offset=max(0, offset),
+                                           query=q)
+        total = len(ingest.scoreboard.teams)
+    return JSONResponse({"standings": rows, "entrants": total,
+                         "limit": limit, "offset": max(0, offset), "q": q})
 
 
 @app.get("/api/health")

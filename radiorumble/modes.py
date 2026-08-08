@@ -171,7 +171,12 @@ class ConquestMode(Mode):
         return {"owned": held, "owned_count": len(held)}
 
     def snapshot_extras(self, board) -> dict:
-        colors = {t.abbr: t.color for t in board.contest.teams}
+        # Only the entries that hold something. In a free-for-all this is
+        # bounded by the size of the board rather than by the size of the
+        # field, which is the difference between a fixed payload and one that
+        # grows with every person who turns up.
+        held = set(board.owners.values())
+        colors = {t.abbr: t.color for t in board.contest.teams if t.abbr in held}
         return {
             "map": {
                 "owners": dict(board.owners),

@@ -150,6 +150,12 @@
   .onair { display:inline-block; width:7px; height:7px; border-radius:50%;
            margin-right:6px; background:#3d4a63; vertical-align:middle; }
   .onair.up { background:#3fd07f; box-shadow:0 0 0 3px rgba(63,208,127,.18); }
+  /* The rest of the field. Only appears when there is one. */
+  .more { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+          padding:9px 4px 2px; font-size:12.5px; color:var(--dim); }
+  .more input { background:var(--panel-2); border:1px solid var(--line);
+                color:var(--text); border-radius:6px; padding:4px 9px;
+                font:inherit; font-size:12.5px; width:150px; }
 </style>
 </head>
 <body>
@@ -191,6 +197,10 @@
       <div class="panel">
         <h2>Standings</h2>
         <div id="standings"><div class="empty">Waiting for the first contact…</div></div>
+        <div id="more" class="more" hidden>
+          <span id="more-note"></span>
+          <input id="find" placeholder="find a callsign…" autocomplete="off" />
+        </div>
       </div>
     </div>
 
@@ -697,13 +707,47 @@
     return [[t.qsos, "QSOs"], [t.multipliers, "grids"], [t.states, "states"]];
   }
 
+  // Everybody below the cut. The scoreboard only carries its first rows —
+  // three thousand callsigns is more than a megabyte on every log line — so
+  // the rest of the table is asked for, and only when somebody asks.
+  var found = null;
+  function wireFind() {
+    var box = document.getElementById("find");
+    if (!box || box.dataset.wired) { return; }
+    box.dataset.wired = "1";
+    var timer = null;
+    box.addEventListener("input", function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        var q = box.value.trim();
+        if (!q) { found = null; renderStandings(); return; }
+        fetch(BASE + "/api/standings?limit=20&q=" + encodeURIComponent(q))
+          .then(function (r) { return r.json(); })
+          .then(function (d) { found = d.standings || []; renderStandings(); })
+          .catch(function () { found = null; });
+      }, 220);
+    });
+  }
+
   function renderStandings() {
     var host = document.getElementById("standings");
-    var rows = state.standings || [];
+    var rows = found || state.standings || [];
     var view = state.contest.view;
     if (!rows.length) {
       host.innerHTML = '<div class="empty">No teams configured — add a [[teams]] block to contest.toml.</div>';
       return;
+    }
+    var total = state.entrants || rows.length;
+    var more = document.getElementById("more");
+    if (more) {
+      // Hidden entirely for a handful of schools: a note saying "showing 5 of
+      // 5" is noise on the page it is meant to clarify.
+      var capped = total > (state.standings || []).length;
+      more.hidden = !capped && !found;
+      document.getElementById("more-note").textContent = found
+        ? (rows.length + " matching of " + total + " entrants")
+        : ("showing the top " + (state.standings || []).length + " of " + total);
+      wireFind();
     }
     var anyVerified = rows.some(function (t) { return (t.verified || 0) + (t.nil || 0) > 0; });
     host.innerHTML = rows.map(function (t, i) {

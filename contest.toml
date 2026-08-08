@@ -61,6 +61,17 @@ dupe_scope = "band"
 #                entered by seeing who turns up.
 compete_as = "team"
 
+#  How many rows the scoreboard shows. The rest of the field is still scored,
+#  still holds territory and still counts towards every total on the page —
+#  only the list is shortened, because the list is what gets pushed down a
+#  websocket every time the log grows. Three thousand callsigns is 1.4MB a
+#  time; fifteen is four.
+#
+#  Everybody below the cut can still find themselves: /api/standings serves
+#  the whole table, searchable, and the page asks for it only when somebody
+#  does. Set to 0 to send everyone, which is fine for a handful of schools.
+standings_limit = 15
+
 #  A directory of submitted logs, one file per entrant, instead of the
 #  single file above. This is what makes cross-checking possible: a
 #  contact can only be confirmed against the other operator's own log.
