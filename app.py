@@ -230,10 +230,24 @@ async def stations() -> JSONResponse:
     heard = listener.stations(include_address=False)
     by_call = {row["call"].upper(): row for row in heard if row.get("call")}
     playing = set(contest.playing())
+    # A free-for-all has no roster to expect anybody from, so the roll call
+    # cannot ask "who is missing" — only "who has turned up". The page needs
+    # to know which of those two it is showing.
+    wide_open = contest.open_now()
+    live_fixtures = [
+        {"label": m.label, "open": m.is_open, "teams": list(m.teams)}
+        for m in contest.fixtures()
+    ]
 
     rostered = set()
     teams = []
     for team in contest.teams:
+        if wide_open and not any(c.upper() in by_call for c in team.callsigns):
+            # Nobody has heard from this entry at all. In a rostered event that
+            # is the most important row on the page; in an open one it is an
+            # entry from an earlier session with nobody behind it.
+            rostered.update(c.upper() for c in team.callsigns)
+            continue
         operators = []
         for call in team.callsigns:
             rostered.add(call.upper())
@@ -270,6 +284,9 @@ async def stations() -> JSONResponse:
             "running": listener.running,
             "ports": list(listener.bound or listener.ports),
             "server_time": _iso_now(),
+            "compete_as": contest.compete_as,
+            "open": wide_open,
+            "fixtures": live_fixtures,
             "teams": teams,
             # Everybody else: heard, but on nobody's roster. At a real event
             # this is most of the log and it is not a problem, it is the rest

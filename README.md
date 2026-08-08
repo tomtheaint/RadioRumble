@@ -222,12 +222,32 @@ off by default — it only makes sense once most entrants are submitting logs.
 
 ## Who is competing
 
-`compete_as = "team"` puts schools against each other. `compete_as = "operator"`
-splits every rostered callsign into its own entry — for a club running a
-contest among its own members, or an event thrown open to anyone with a
-licence. The machinery is identical; only the unit of competition changes.
-Operators keep their school named underneath, and get distinct colours so two
-dots on a map are two dots you can tell apart.
+| `compete_as` | Who competes |
+|---|---|
+| `team` | Schools against each other, rosters as written |
+| `operator` | Every **rostered** callsign as its own entry — a club running a contest among its own members |
+| `open` | A **free-for-all**. No roster at all: anybody whose log reaches the server is entered, from the moment it does |
+
+The machinery is identical; only the unit of competition changes. Operators
+keep their school named underneath, and get distinct colours so two dots on a
+map are two dots you can tell apart.
+
+`open` is the one that needed building. `operator` still requires everybody to
+be listed in advance, and a club night or anything advertised on a repeater
+does not work that way — you find out who entered by seeing who turns up, and
+the first contact somebody logs is the only moment we could possibly learn they
+exist. So the entry is created then, keeping the colour it was given so a field
+does not repaint itself on a reload.
+
+Teams listed under an open event are still honoured: they are pre-registered
+entrants with a name and colours somebody chose, and everybody else is admitted
+on arrival. Every game mode works unchanged — a mode is handed an entrant and
+asked what a contact is worth, and has never needed to know whether that
+entrant is a school or a stranger.
+
+A rostered event still keeps the world out, which is the invariant the
+standings depend on: at a collegiate event most of the log is contacts with
+people who never entered.
 
 Give each entrant a `grid` and their station is drawn on the map and the globe.
 That is worth doing: seeing your own dot next to the states you *haven't* taken
@@ -412,6 +432,20 @@ Write it and the roll call shows only the schools actually expected at the
 radio that afternoon — listing forty teams when four are playing is as useless
 as listing none. Use `start`/`end` instead of `date` when a day is not precise
 enough.
+
+A **free-for-all is a fixture with nobody named in it**, because a fixture with
+nobody in it can only mean everybody:
+
+```toml
+[[matches]]
+date  = 2026-09-19
+open  = true
+label = "Open night"
+```
+
+A season of team matches can hold an open night among them. On an open night
+the roll call stops asking "who is missing" — there is no roster to ask it of —
+and becomes a list of who has checked in.
 
 #### Controlling it
 

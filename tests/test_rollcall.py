@@ -140,3 +140,57 @@ def _hear(application, call):
               + struct.pack(">?", True) + struct.pack(">II", 1500, 1200)
               + s(call) + s("EM19RF") + s(""))
     application.listener._handle(packet, "10.0.0.5", 2237)
+
+
+# ------------------------------------------------------- when there is no team
+
+def test_an_open_event_lists_who_turned_up_not_who_was_expected(client, monkeypatch):
+    """A free-for-all has no roster, so "not heard yet" would be a row for a
+    person who does not exist. Saying "3 of 5 on the air" would be inventing
+    a denominator."""
+    test_client, application = client
+    monkeypatch.setattr(application.contest, "compete_as", "open")
+    application.listener._stations.clear()
+
+    body = test_client.get("/api/stations").json()
+    assert body["open"] is True
+    assert body["compete_as"] == "open"
+    assert body["teams"] == [], "nobody has checked in yet"
+
+
+def test_somebody_who_checks_in_appears_in_an_open_event(client, monkeypatch):
+    test_client, application = client
+    monkeypatch.setattr(application.contest, "compete_as", "open")
+    application.listener._stations.clear()
+    _hear(application, application.contest.teams[0].callsigns[0])
+
+    body = test_client.get("/api/stations").json()
+    assert len(body["teams"]) == 1
+    assert body["teams"][0]["connected"] is True
+
+
+def test_a_rostered_event_still_names_the_people_who_are_missing(client):
+    """The opposite case, and the more important one: the row somebody
+    checking in is looking for is the one with nothing behind it."""
+    test_client, application = client
+    application.listener._stations.clear()
+
+    body = test_client.get("/api/stations").json()
+    assert body["open"] is False
+    everyone = [o for t in body["teams"] for o in t["operators"]]
+    assert everyone and all(o["heard"] is False for o in everyone)
+
+
+def test_the_running_fixtures_are_named_for_the_page(client, monkeypatch):
+    from datetime import date, datetime, timezone
+
+    from radiorumble.config import Match
+
+    test_client, application = client
+    today = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(application.contest, "matches",
+                        (Match(teams=("KU",), day=today, label="Week 1"),))
+
+    body = test_client.get("/api/stations").json()
+    assert [f["label"] for f in body["fixtures"]] == ["Week 1"]
+    assert body["fixtures"][0]["open"] is False

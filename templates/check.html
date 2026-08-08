@@ -136,7 +136,7 @@
     page.
   </div>
 
-  <h2 id="roll-title">Roll call</h2>
+  <h2 id="roll-title">Roll call <span class="sub2"></span></h2>
   <p class="count" id="roll-note"></p>
   <div class="filters" id="team-filters"></div>
   <div id="roll"></div>
@@ -234,21 +234,36 @@
   }
 
   function renderRoll(data) {
+    var open = !!data.open;
     var playing = (data.teams || []).filter(function (t) { return t.playing; });
-    renderFilters(playing);
+    renderFilters(open ? [] : playing);
+
+    // A free-for-all has no roster, so the section is a list of who has turned
+    // up rather than a check against who was expected. Saying "3 of 5 teams on
+    // the air" would be inventing a denominator.
+    var fixture = (data.fixtures || []).filter(function (f) { return f.label; })
+      .map(function (f) { return f.label; }).join(" · ");
+    document.getElementById("roll-title").firstChild.nodeValue =
+      open ? "Checked in " : "Roll call ";
+    document.getElementById("roll-title").querySelector(".sub2") &&
+      (document.getElementById("roll-title").querySelector(".sub2").textContent = fixture);
 
     var shown = playing.filter(function (t) {
       return !teamFilter || t.abbr === teamFilter;
     });
     var connected = playing.filter(function (t) { return t.connected; }).length;
     document.getElementById("roll-note").textContent = playing.length
-      ? (connected + " of " + playing.length + " team" +
-         (playing.length === 1 ? "" : "s") + " on the air")
+      ? (open
+          ? (connected + " on the air of " + playing.length + " who have checked in")
+          : (connected + " of " + playing.length + " team" +
+             (playing.length === 1 ? "" : "s") + " on the air"))
       : "";
 
     if (!shown.length) {
       document.getElementById("roll").innerHTML =
-        '<div class="empty">No teams are scheduled today.</div>';
+        '<div class="empty">' + (open
+          ? "Nobody has checked in yet. Log a contact and you appear here."
+          : "No teams are scheduled today.") + "</div>";
       return;
     }
 

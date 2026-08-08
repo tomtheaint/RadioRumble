@@ -31,11 +31,19 @@ class Match:
     listing none.
     """
 
-    teams: tuple                    # team abbreviations
+    teams: tuple = ()               # team abbreviations; empty when open
     day: object = None              # the date it is played on
     start: object = None            # a window, when the day is not enough
     end: object = None
     label: str = ""
+    #: A free-for-all: no roster, anybody who shows up is in it. Set on its
+    #: own, or implied by naming no teams -- a fixture with nobody in it can
+    #: only mean everybody.
+    open: bool = False
+
+    @property
+    def is_open(self) -> bool:
+        return self.open or not self.teams
 
     def on(self, when: datetime) -> bool:
         """Is this fixture happening at that moment?
@@ -104,9 +112,11 @@ class Contest:
     listener: dict = field(default_factory=dict)
     #: The fixture list, if there is one. Empty means everybody plays today.
     matches: tuple = ()
-    #: "team" pits schools against each other; "operator" splits every
-    #: rostered callsign into its own entry, for a club's internal contest or
-    #: an event open to all comers.
+    #: "team"     schools against each other.
+    #: "operator" every rostered callsign as its own entry — a club running a
+    #:            contest among its own members. Still needs a roster.
+    #: "open"     a free-for-all. No roster at all: anybody whose log reaches
+    #:            us is entered, from the moment it does.
     compete_as: str = "team"
     #: How far apart two logs may place the same contact and still match.
     #: Clocks drift and loggers round differently; FT8 transmissions are 15
@@ -132,16 +142,78 @@ class Contest:
 
             self.bonuses = BonusRules()
 
+    @property
+    def is_open(self) -> bool:
+        """A free-for-all: anybody whose log reaches us is competing.
+
+        Distinct from `compete_as = "operator"`, which still needs everyone
+        listed in advance. Open events have no roster at all, which is the
+        normal shape of a club night or anything advertised on a repeater --
+        you find out who entered by seeing who turns up.
+        """
+        return self.compete_as == "open"
+
+    def fixtures(self, when: datetime | None = None) -> tuple:
+        """The matches happening at that moment."""
+        moment = when or datetime.now(timezone.utc)
+        return tuple(m for m in self.matches if m.on(moment))
+
+    def open_now(self, when: datetime | None = None) -> bool:
+        """Is what is happening right now a free-for-all?
+
+        True when the event itself is open, and also when the fixture running
+        is -- a season of team matches can still have an open night in it.
+        """
+        if self.is_open:
+            return True
+        live = self.fixtures(when)
+        return bool(live) and all(m.is_open for m in live)
+
     def playing(self, when: datetime | None = None) -> tuple:
-        """Which teams are expected at the radio. All of them when no fixture
-        list has been written, which is what a single event means."""
+        """Which teams are expected at the radio.
+
+        All of them when no fixture list has been written, which is what a
+        single event means -- and all of them again when the fixture running is
+        an open one, because in a free-for-all everybody who has shown up is in
+        it by definition.
+        """
         if not self.matches:
             return tuple(t.abbr for t in self.teams)
         moment = when or datetime.now(timezone.utc)
-        due = {abbr.upper() for m in self.matches if m.on(moment) for abbr in m.teams}
+        live = self.fixtures(moment)
+        if any(m.is_open for m in live):
+            return tuple(t.abbr for t in self.teams)
+        due = {abbr.upper() for m in live for abbr in m.teams}
         # Ordered as the teams are, not as the fixtures are, so the roll call
         # reads the same way the scoreboard does.
         return tuple(t.abbr for t in self.teams if t.abbr.upper() in due)
+
+    def admit(self, callsign: str) -> "Team | None":
+        """Enter a station that just turned up. Only in an open event.
+
+        The entrant is created the first time their log reaches us, which is
+        the only moment we could possibly learn they exist. Idempotent, and
+        `None` anywhere else -- a rostered event rejecting an unknown station
+        is the behaviour that keeps the rest of the world out of the standings.
+        """
+        call = (callsign or "").upper().strip()
+        if not call or not self.is_open:
+            return None
+        found = self._by_callsign.get(call)
+        if found is not None:
+            return found
+        entrant = Team(
+            name=call,
+            abbr=call,
+            # Cycled rather than random so the same field gets the same
+            # colours on a reload, which matters when the map is the
+            # scoreboard.
+            color=OPERATOR_COLORS[len(self.teams) % len(OPERATOR_COLORS)],
+            callsigns=(call,),
+        )
+        self.teams = tuple(self.teams) + (entrant,)
+        self._by_callsign[call] = entrant
+        return entrant
 
     def team_for(self, callsign: str) -> Team | None:
         """Which team a logging station belongs to, or None if unrostered.
@@ -293,8 +365,7 @@ def _load_matches(raw) -> tuple:
         if not isinstance(entry, dict):
             continue
         teams = tuple(str(t).upper() for t in entry.get("teams", []) if str(t).strip())
-        if not teams:
-            continue
+        wide = bool(entry.get("open", False)) or not teams
         day = entry.get("date")
         if isinstance(day, datetime):
             day = day.date()
@@ -303,7 +374,7 @@ def _load_matches(raw) -> tuple:
             day = moment.date() if moment else None
         elif not isinstance(day, date):
             day = None
-        out.append(Match(teams=teams, day=day,
+        out.append(Match(teams=teams, day=day, open=wide,
                          start=_as_datetime(entry.get("start")),
                          end=_as_datetime(entry.get("end")),
                          label=str(entry.get("label", ""))))
@@ -333,6 +404,11 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
 
     compete_as = os.environ.get("RR_COMPETE_AS") or contest.get("compete_as", "team")
     if compete_as == "operator":
+        teams = split_into_operators(teams)
+    elif compete_as == "open":
+        # Anyone listed is a pre-registered entrant with a name and colours
+        # somebody chose; everybody else is admitted when their log arrives.
+        # Splitting keeps the unit of competition one callsign either way.
         teams = split_into_operators(teams)
 
     log_file = Path(contest.get("log_file", "mock_contest_log.txt"))

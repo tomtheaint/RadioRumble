@@ -50,8 +50,15 @@ dupe_scope = "band"
 
 #  Who is competing against whom.
 #    "team"      schools against each other, rosters as written below
-#    "operator"  every rostered callsign becomes its own entry, for a
-#                club's internal contest or an event open to all comers
+#    "operator"  every rostered callsign becomes its own entry, for a club's
+#                internal contest. Still needs everyone listed in advance.
+#    "open"      a free-for-all. No roster at all: anybody whose log reaches
+#                the server is entered, from the moment it does. Teams listed
+#                below are still honoured — they are pre-registered entrants
+#                with a name and colours somebody chose — and everybody else
+#                is admitted on arrival, which is how a club night or anything
+#                advertised on a repeater actually works: you find out who
+#                entered by seeing who turns up.
 compete_as = "team"
 
 #  A directory of submitted logs, one file per entrant, instead of the
@@ -113,6 +120,15 @@ special_calls = []
 #    start = 2026-09-12T18:00:00Z
 #    end   = 2026-09-12T20:00:00Z
 #    teams = ["NEB", "ISU"]
+#
+#  A free-for-all is a fixture with nobody named in it. Naming no teams says
+#  the same thing as open = true, because a fixture with nobody in it can only
+#  mean everybody:
+#
+#    [[matches]]
+#    date  = 2026-09-19
+#    open  = true
+#    label = "Open night"
 #  ---------------------------------------------------------------------------
 
 

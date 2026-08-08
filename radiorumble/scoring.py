@@ -142,9 +142,25 @@ class Scoreboard:
             return (qso.station, qso.call, qso.band, qso.mode)
         return (qso.station, qso.call, qso.band)
 
+    def entrant_for(self, qso: Qso):
+        """Which entry this contact scores for, admitting a new one if the
+        event is open.
+
+        In a rostered event an unknown station is the rest of the world and is
+        dropped. In a free-for-all there is no such thing as unknown: the first
+        contact somebody logs is how we learn they entered, so the entry is
+        created here and kept.
+        """
+        team = self.contest.team_for(qso.station)
+        if team is None:
+            team = self.contest.admit(qso.station)
+            if team is not None and team.abbr not in self.teams:
+                self.teams[team.abbr] = TeamScore(team=team)
+        return team
+
     def check(self, qso: Qso) -> str | None:
         """Return the reason this QSO cannot be scored, or None if it can."""
-        team = self.contest.team_for(qso.station)
+        team = self.entrant_for(qso)
         if team is None:
             return REJECT_UNROSTERED
         if not self.contest.in_window(qso.when):
@@ -196,7 +212,7 @@ class Scoreboard:
         # harsher than losing the contact: guessing at a half-copied callsign
         # should be worse than not logging it at all.
         if status == NIL and self.rules.nil_penalty:
-            team = self.contest.team_for(qso.station)
+            team = self.entrant_for(qso)
             if team is not None:
                 self.teams[team.abbr].points -= self.rules.nil_penalty
                 self.teams[team.abbr].verification[NIL] += 1
@@ -210,7 +226,7 @@ class Scoreboard:
             self.rejected[reason] += 1
             return reason
 
-        team = self.contest.team_for(qso.station)
+        team = self.entrant_for(qso)
         score = self.teams[team.abbr]
         self._worked[team.abbr].add(self._dupe_key(qso))
 
