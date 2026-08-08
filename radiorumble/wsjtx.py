@@ -18,9 +18,18 @@ endian, length-prefixed strings, and a fixed field order per message type:
 A null string is length 0xffffffff rather than 0, which is the one trap worth
 knowing: read it as a length and you will try to allocate four gigabytes.
 
-Set WSJT-X to *Reporting → UDP Server* at this machine's address, port 2237.
-Several instances can report to one server, which is exactly what a multi-
-operator team wants.
+WSJT-X has two of these, and which one an operator can spare matters:
+
+* **UDP Server** (2237) speaks the whole protocol -- heartbeats, status, and
+  contacts as parsed fields. It is also what JTAlert and GridTracker use, so
+  on most operators' machines it is already taken by something local.
+* **Secondary UDP Server** (2333), "enable logged contact ADIF broadcast",
+  sends one thing: a complete ADIF record each time a contact is logged.
+  Marked deprecated by WSJT-X and still the field most operators have free.
+
+So both are accepted. The difference worth knowing is that the secondary
+sends *nothing at all* until a contact is logged -- no heartbeat, no status --
+so a station using it cannot be seen setting up, only working.
 """
 from __future__ import annotations
 
@@ -35,6 +44,10 @@ MAGIC = 0xADBCCBDA
 QSO_LOGGED = 5
 HEARTBEAT = 0
 STATUS = 1
+#  Type 12 carries a whole ADIF record rather than parsed fields. It is what
+#  the "logged contact ADIF broadcast" sends, and it is the one most operators
+#  will actually be using -- see the module docstring.
+LOGGED_ADIF = 12
 NULL_LENGTH = 0xFFFFFFFF
 
 # Qt counts milliseconds from midnight; QDate counts Julian days.
@@ -236,6 +249,38 @@ def describe(data: bytes) -> Presence:
     except ValueError:
         pass                              # an older WSJT-X stops earlier
     return found
+
+
+def is_wsjtx(data: bytes) -> bool:
+    """Does this datagram carry WSJT-X's framing at all?
+
+    The secondary UDP server sends bare ADIF with no header, so "is this one
+    of ours" has to be answerable before anything is decoded.
+    """
+    return len(data) >= 4 and data[:4] == b"\xad\xbc\xcb\xda"
+
+
+def adif_text(data: bytes) -> str:
+    """The ADIF out of a Logged ADIF datagram, or "" if it isn't one.
+
+    Type 12 is a binary header followed by a complete ADIF file -- header,
+    one record, and the terminator. WSJT-X's own note says a receiver can
+    treat the whole datagram as ADIF without special parsing, which is true
+    because an ADIF reader skips anything that isn't a tag; this reads the
+    string properly anyway, so what lands in the log is text rather than text
+    with sixteen bytes of Qt in front of it.
+    """
+    reader = Reader(data)
+    if reader.uint32() != MAGIC:
+        return ""
+    reader.uint32()                       # schema
+    if reader.uint32() != LOGGED_ADIF:
+        return ""
+    reader.string()                       # the sending instance's id
+    try:
+        return reader.string()
+    except ValueError:
+        return ""
 
 
 def decode(data: bytes) -> tuple[int, LoggedQso | None]:

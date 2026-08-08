@@ -58,7 +58,7 @@ def logged(my_call: str, dx: str, dx_grid: str = "EM12", my_grid: str = "EM19rf"
 
 @pytest.fixture
 def listener(tmp_path):
-    return WsjtxListener(log_dir=tmp_path, port=0)
+    return WsjtxListener(log_dir=tmp_path, ports=[0])
 
 
 # ------------------------------------------------------------- what it decodes
@@ -167,10 +167,86 @@ def test_an_old_event_falls_out_of_the_short_window(listener):
 
 
 def test_a_bad_datagram_is_counted_and_does_not_stop_anything(listener):
-    with pytest.raises(ValueError):
-        listener._handle(b"rubbish", "10.0.0.5")
+    """Anything without WSJT-X's framing is tried as ADIF, because that is what
+    the secondary server sends. Rubbish yields no contacts and is counted as
+    rejected rather than becoming a station nobody can explain."""
+    listener._handle(b"rubbish", "10.0.0.5")
+    assert listener.stations() == []
+    assert listener.status()["rejected"] == 1
+
     listener._handle(status("KE0VUM"), "10.0.0.5")
     assert listener.stations()[0]["call"] == "KE0VUM"
+
+
+# ------------------------------------------------- the secondary UDP server
+
+#  What "enable logged contact ADIF broadcast" puts on the wire: a complete
+#  ADIF file with one record, and no Qt framing at all.
+ADIF_RECORD = (
+    "<adif_ver:5>3.0.7 <programid:6>WSJT-X <EOH>\n"
+    "<call:5>K5ABC <gridsquare:4>EM12 <mode:3>FT8 <rst_sent:3>-08 "
+    "<rst_rcvd:3>-11 <qso_date:8>20260808 <time_on:6>140000 <band:3>20m "
+    "<station_callsign:6>KE0VUM <my_gridsquare:6>EM19RF <eor>"
+)
+
+
+def framed_adif(text: str = ADIF_RECORD, ident: str = "WSJT-X") -> bytes:
+    """Type 12, which the *primary* server sends for the same event."""
+    return _head(12, ident) + _s(text)
+
+
+def test_bare_adif_from_the_secondary_server_is_a_contact(listener, tmp_path):
+    """The secondary UDP server is the field most operators have free, and it
+    sends ADIF with no header. Requiring the magic number would have meant
+    hearing nothing at all from them."""
+    listener._handle(ADIF_RECORD.encode(), "10.0.0.5", 2333)
+
+    row = listener.stations()[0]
+    assert row["call"] == "KE0VUM"
+    assert row["qsos"] == 1
+    assert row["band"] == "20m"
+    assert (tmp_path / "KE0VUM.adi").exists()
+
+
+def test_the_framed_adif_message_is_read_the_same_way(listener, tmp_path):
+    listener._handle(framed_adif(), "10.0.0.5", 2237)
+
+    assert listener.stations()[0]["call"] == "KE0VUM"
+    written = (tmp_path / "KE0VUM.adi").read_text()
+    # The Qt header is stripped rather than written into the log.
+    assert written.startswith("<") and "\xad" not in written
+
+
+def test_the_record_is_written_through_unchanged(listener, tmp_path):
+    """Not re-serialised from the parsed fields: a round trip would quietly
+    drop every ADIF field this app doesn't happen to model."""
+    listener._handle(ADIF_RECORD.encode(), "10.0.0.5", 2333)
+
+    written = (tmp_path / "KE0VUM.adi").read_text()
+    assert "<my_gridsquare:6>EM19RF" in written
+    assert "<rst_rcvd:3>-11" in written
+
+
+def test_which_port_it_arrived_on_does_not_decide_how_it_is_read(listener):
+    """Somebody will put the secondary on 2237. Deciding on the magic number
+    rather than the port means that still works."""
+    listener._handle(ADIF_RECORD.encode(), "10.0.0.5", 2237)
+    assert listener.stations()[0]["qsos"] == 1
+
+
+def test_adif_with_no_usable_record_is_rejected_not_stored(listener):
+    listener._handle(b"<adif_ver:5>3.0.7 <EOH>", "10.0.0.5", 2333)
+    assert listener.stations() == []
+    assert listener.status()["rejected"] == 1
+
+
+def test_a_station_on_the_secondary_server_is_only_seen_once_it_works_somebody(listener):
+    """Worth pinning because it is a real limitation, not an oversight: the
+    secondary server sends nothing at all until a contact is logged, so the
+    check page cannot show that operator setting up."""
+    assert listener.stations() == []
+    listener._handle(ADIF_RECORD.encode(), "10.0.0.5", 2333)
+    assert len(listener.stations()) == 1
 
 
 # -------------------------------------------------------------- what it shows
@@ -212,7 +288,7 @@ def test_forgetting_clears_who_was_heard_and_not_what_was_logged(listener, tmp_p
 # ------------------------------------------------------------ starting, stopping
 
 def test_it_starts_and_stops(tmp_path):
-    listener = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", port=0)
+    listener = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", ports=[0])
     started, _message = listener.start()
     assert started and listener.running
     stopped, _message = listener.stop()
@@ -220,7 +296,7 @@ def test_it_starts_and_stops(tmp_path):
 
 
 def test_starting_twice_says_so_rather_than_binding_twice(tmp_path):
-    listener = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", port=0)
+    listener = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", ports=[0])
     listener.start()
     try:
         started, message = listener.start()
@@ -231,7 +307,7 @@ def test_starting_twice_says_so_rather_than_binding_twice(tmp_path):
 
 
 def test_stopping_when_it_was_never_running_is_not_an_error(tmp_path):
-    stopped, message = WsjtxListener(log_dir=tmp_path, port=0).stop()
+    stopped, message = WsjtxListener(log_dir=tmp_path, ports=[0]).stop()
     assert stopped is False
     assert "wasn't running" in message
 
@@ -239,11 +315,11 @@ def test_stopping_when_it_was_never_running_is_not_an_error(tmp_path):
 def test_a_port_already_taken_is_reported_not_raised(tmp_path):
     """rec.py is often still running from a rehearsal. That is a sentence on a
     page, not a stack trace in a log nobody is reading."""
-    first = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", port=0)
+    first = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", ports=[0])
     first.start()
-    port = first._sock.getsockname()[1]
+    port = first.bound[0]
     try:
-        second = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", port=port)
+        second = WsjtxListener(log_dir=tmp_path, host="127.0.0.1", ports=[port])
         # SO_REUSEADDR lets two UDP sockets share a port on some systems, so
         # this asserts the shape of the answer rather than that it must fail.
         started, message = second.start()

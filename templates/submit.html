@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Submit your log</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
+          --text:#e8edf5; --muted:#8b97ad; --dim:#5d6980; --live:#3fd07f; --bad:#ff8080; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:20px 16px 60px; }
+  header { display:flex; gap:12px; align-items:center; padding-bottom:14px;
+           border-bottom:1px solid var(--line); margin-bottom:18px; }
+  h1 { font-size:20px; margin:0; }
+  a.back { margin-left:auto; color:#4da3ff; text-decoration:none; font-size:13px; }
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          padding:16px; margin-bottom:16px; }
+  .why { color:var(--muted); font-size:13.5px; }
+  .why b { color:var(--text); }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input[type=text], input[type=file] { width:100%; background:var(--panel-2);
+    border:1px solid var(--line); color:var(--text); border-radius:7px;
+    padding:8px 10px; font:inherit; font-size:14px; }
+  button { background:#1c5f3a; border:1px solid #2b7d4f; color:var(--text);
+           border-radius:7px; padding:9px 18px; font:inherit; font-size:14px;
+           cursor:pointer; margin-top:14px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .result { border-radius:10px; padding:14px 16px; font-size:14px; margin-top:16px; }
+  .result.ok { border:1px solid rgba(63,208,127,.5); background:rgba(63,208,127,.08); }
+  .result.bad { border:1px solid rgba(255,128,128,.5); background:rgba(255,128,128,.08); }
+  .result b { display:block; margin-bottom:6px; }
+  .result ul { margin:8px 0 0; padding-left:20px; color:var(--muted); font-size:13px; }
+  .warn { color:#ffb347; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Submit your log</h1>
+    <a class="back" href="./">← scoreboard</a>
+  </header>
+
+  <div class="card why">
+    <b>After the contest, send in your whole log.</b>
+    The live feed only carries contacts you completed while your reporting was
+    pointed here — a full log is the whole story.
+    <p>
+      It is what turns a contact from <b>unmatched</b> into <b>verified</b>:
+      your log confirming the other operator's, and theirs confirming yours.
+      Both ends have to submit for that to work, which is why this page is open
+      to everybody.
+    </p>
+    <p style="margin-bottom:0">
+      An <b>ADIF</b> file — the <code>.adi</code> your logging software writes.
+      WSJT-X keeps one at <code>wsjtx_log.adi</code> in its log directory.
+      Submitting twice is harmless: contacts are matched on their content, so
+      duplicates fold into one.
+    </p>
+  </div>
+
+  <form class="card" id="form">
+    <label for="file">Your ADIF log</label>
+    <input type="file" id="file" name="file" accept=".adi,.adif,.txt,text/plain" required />
+
+    <label for="callsign">Your station callsign <span style="color:var(--dim)">(optional)</span></label>
+    <input type="text" id="callsign" name="callsign" placeholder="taken from the log if left blank"
+           autocapitalize="characters" autocomplete="off" />
+
+    <button id="go">Submit the log</button>
+  </form>
+
+  <div id="result"></div>
+</div>
+
+<script>
+(function () {
+  var BASE = location.pathname.replace(/\/submit\/?$/, "").replace(/\/$/, "");
+  var form = document.getElementById("form");
+  var out = document.getElementById("result");
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var file = document.getElementById("file").files[0];
+    if (!file) { return; }
+    var body = new FormData();
+    body.append("file", file);
+    body.append("callsign", document.getElementById("callsign").value || "");
+
+    var go = document.getElementById("go");
+    go.disabled = true;
+    go.textContent = "Reading…";
+    out.innerHTML = "";
+
+    fetch(BASE + "/api/submit", { method: "POST", body: body })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { throw new Error(res.d.detail || "That didn't work."); }
+        var d = res.d;
+        var bits = ["<b>Thank you — " + d.contacts + " contacts read.</b>"];
+        bits.push("Logged as <b>" + esc(d.callsign) + "</b>.");
+        var list = [];
+        if (d.first) { list.push("First contact " + esc(d.first.replace("T", " ").slice(0, 16)) + "Z"); }
+        if (d.last) { list.push("Last contact " + esc(d.last.replace("T", " ").slice(0, 16)) + "Z"); }
+        if (d.rostered.length) { list.push("Rostered callsigns: " + esc(d.rostered.join(", "))); }
+        // Not an error: most logs contain plenty of stations who aren't entrants.
+        if (d.unrostered.length) {
+          list.push('<span class="warn">Not on any roster: ' + esc(d.unrostered.join(", ")) +
+                    " — these still help cross-check other people's contacts.</span>");
+        }
+        bits.push("<ul><li>" + list.join("</li><li>") + "</li></ul>");
+        out.innerHTML = '<div class="result ok">' + bits.join(" ") + "</div>";
+        form.reset();
+      })
+      .catch(function (e) {
+        out.innerHTML = '<div class="result bad"><b>That log wasn\'t accepted.</b>' +
+          esc(e.message) + "</div>";
+      })
+      .then(function () { go.disabled = false; go.textContent = "Submit the log"; });
+  });
+})();
+</script>
+</body>
+</html>

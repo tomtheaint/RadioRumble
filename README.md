@@ -321,12 +321,27 @@ something to depend on.
 
 ### Live, from WSJT-X
 
-The server listens itself. Point WSJT-X at this machine under
-**Reporting → UDP Server**, port 2237, and every time an operator presses Log
-the contact arrives as a UDP datagram, is decoded, and is appended as ADIF into
-the log directory — so a live station and a mailed-in file are
-indistinguishable by the time they reach the scoreboard. Several instances can
-report to one server, which is what a multi-operator team wants.
+The server listens itself, on **both** of WSJT-X's reporting servers, because
+operators can only spare one of them and it is rarely the same one twice.
+
+| WSJT-X setting | Port | Sends | You appear |
+|---|---|---|---|
+| **Secondary UDP Server** — “Enable logged contact ADIF broadcast” | 2333 | One ADIF record per logged contact, and nothing else | **After your first contact** |
+| **UDP Server** | 2237 | The whole protocol: heartbeat, status, contacts | **Within ~15 seconds**, before working anybody |
+
+The secondary is the one most operators have free — the box above it is usually
+taken by JTAlert or GridTracker — and WSJT-X marks it deprecated, which has not
+stopped it being the practical answer. The cost is that it is silent until a
+contact is logged, so a station using it cannot be seen setting up. That is a
+property of the protocol, not of this app.
+
+Which shape a datagram is decided by **what is in it**, not by the port it
+arrived on: a header beginning `0xadbccbda` is read as WSJT-X, anything else is
+tried as ADIF. So an operator who puts the secondary in the primary's box is
+still understood, which somebody will and it is not worth a support
+conversation. Either way the contact is appended as ADIF into the log
+directory, so a live station and a mailed-in file are indistinguishable by the
+time they reach the scoreboard.
 
 It starts with the server and is configured in `[listener]`:
 
@@ -334,9 +349,12 @@ It starts with the server and is configured in `[listener]`:
 [listener]
 enabled = true
 host = "0.0.0.0"
-port = 2237
+ports = [2237, 2333]
 split = true        # one file per station callsign, which cross-checking needs
 ```
+
+One port failing does not stop the other, and which ones actually bound is on
+the listener page.
 
 #### “Is it hearing me?”
 
@@ -344,12 +362,14 @@ split = true        # one file per station callsign, which cross-checking needs
 operator has the same question while setting up, and before this the only way
 to answer it was to work somebody and hope.
 
-WSJT-X sends a heartbeat every fifteen seconds and a status message whenever
-anything changes, and a station's own callsign is in the status — so a rig
-appears on the check page within about fifteen seconds of being pointed here,
-**without having worked anybody**. It shows the callsign, grid, band, whether
-it is transmitting, and how long ago it was last heard. Addresses are not
-shown: a callsign is broadcast to the world anyway and an address is not.
+It shows the callsign, grid, band, whether the station is transmitting, and how
+long ago it was last heard — and it tells somebody who *isn't* listed exactly
+what to change, on the same screen. How soon they appear depends on which box
+they used, per the table above; the page says so rather than leaving an
+operator on the secondary server wondering why nothing happened.
+
+Addresses are not shown: a callsign is broadcast to the world anyway and an
+address is not.
 
 #### Controlling it
 
@@ -380,6 +400,25 @@ the first anybody knows is that the scoreboard stayed at zero. That is why the
 server does it too.
 
 The raw bytes are available with `--raw` when a datagram needs looking at.
+
+### Full logs, afterwards
+
+**[`/submit`](http://localhost:7373/submit) is public**, for the same reason
+the check page is: cross-checking only works when *both* ends submit, and a
+token in front of it would mean only officials could do the thing every entrant
+needs to do.
+
+The live feed only carries contacts an operator completed while their reporting
+was pointed here. A full log is the whole story — it is what turns a contact
+from **unmatched** into **verified** or **nil**, and what catches the half hour
+somebody spent with their settings wrong. The file lands beside the live logs
+as `submitted-<CALL>-<timestamp>.adi`, and cross-checking picks it up on the
+next read.
+
+Submitting twice is harmless and never overwrites: contacts are keyed by their
+content, so duplicates fold into one. Whose log it is comes from the log's own
+`station_callsign` fields; the callsign box is only a fallback for a file whose
+records disagree with each other.
 
 ### From files
 
@@ -436,6 +475,7 @@ templates/index.html    scoreboard, US map and globe in one page
 templates/admin.html    the review screen
 templates/listener.html the listener's controls
 templates/check.html    "is it hearing me?", for operators setting up
+templates/submit.html   handing in a full log afterwards
 static/
   us-states.json        50 states + DC, Natural Earth
   world-land.json       world coastline, Natural Earth
@@ -470,6 +510,7 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/api/board` | The pieces of the board and where they are. Fetched once by the page |
 | `/check` | “Is it hearing me?” — public, for operators setting up |
 | `/api/stations` | Who the listener has heard from. Public, minus the addresses |
+| `/submit` · `/api/submit` | Hand in a full log after the contest. Public |
 | `/listener` | Start, stop, and what has been heard |
 | `/api/listener` · `/start` · `/stop` · `/forget` | The same, as JSON. Needs the admin token |
 | `/api/health` | Status, how many contacts are held, how many are voided |

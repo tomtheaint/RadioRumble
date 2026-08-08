@@ -110,7 +110,22 @@ special_calls = []
 [listener]
 enabled = true         # start it with the server
 host = "0.0.0.0"       # every interface, so operators on the venue wifi reach it
-port = 2237            # WSJT-X's default
+
+#  Both of WSJT-X's reporting servers, because operators can only spare one of
+#  them and it is rarely the same one twice.
+#
+#    2237  "UDP Server" — the whole protocol, including the heartbeat that
+#          lets somebody be seen setting up. Usually already taken on the
+#          operator's machine by JTAlert or GridTracker.
+#    2333  "Secondary UDP Server" — tick "Enable logged contact ADIF
+#          broadcast". One ADIF record per contact and nothing else, so a
+#          station on this one is not seen until it works somebody. Deprecated
+#          by WSJT-X, and still the field most operators have free.
+#
+#  Which shape a datagram is decided by what is in it, not by the port it
+#  arrived on, so an operator who puts the wrong one in the wrong box is still
+#  understood.
+ports = [2237, 2333]
 
 #  One file per station callsign inside log_dir, which is what cross-checking
 #  needs. False writes everything into the contest's single log_file instead.

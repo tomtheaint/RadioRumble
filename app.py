@@ -19,7 +19,8 @@ from pathlib import Path
 import os
 import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException,
+                     UploadFile, WebSocket, WebSocketDisconnect)
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -45,7 +46,7 @@ _listener_cfg = contest.listener or {}
 listener = WsjtxListener(
     log_dir=contest.log_dir or contest.log_file.parent,
     host=str(_listener_cfg.get("host", "0.0.0.0")),
-    port=int(_listener_cfg.get("port", 2237)),
+    ports=_listener_cfg.get("ports", [2237, 2333]),
     split=bool(_listener_cfg.get("split", True)),
     fallback=contest.log_file,
 )
@@ -56,6 +57,12 @@ listener = WsjtxListener(
 # Generated if unset so the endpoints are never accidentally open.
 ADMIN_TOKEN = os.environ.get("RR_ADMIN_TOKEN") or secrets.token_urlsafe(16)
 ADMIN_TOKEN_GENERATED = "RR_ADMIN_TOKEN" not in os.environ
+
+
+def _safe_name(value: str) -> str:
+    """A callsign typed by a stranger becomes part of a filename."""
+    keep = [c for c in str(value).upper() if c.isalnum() or c in "-_"]
+    return ("".join(keep) or "UNKNOWN")[:24]
 
 
 def _iso_now() -> str:
@@ -199,7 +206,7 @@ async def stations() -> JSONResponse:
     return JSONResponse(
         {
             "running": listener.running,
-            "port": listener.port,
+            "ports": list(listener.bound or listener.ports),
             "server_time": _iso_now(),
             "stations": listener.stations(include_address=False),
         }
@@ -243,6 +250,84 @@ async def listener_forget() -> JSONResponse:
     """
     listener.forget()
     return JSONResponse({"cleared": True})
+
+
+SUBMIT_TEMPLATE = BASE_DIR / "templates" / "submit.html"
+
+#: A collegiate log is a few hundred contacts. A megabyte is a decade of them,
+#: and refusing more is cheaper than discovering what a browser will upload.
+MAX_LOG_BYTES = 4 * 1024 * 1024
+
+
+@app.get("/submit", response_class=HTMLResponse)
+async def submit_page() -> HTMLResponse:
+    """Where an operator hands in their full log after the contest.
+
+    Public, and deliberately so: the whole value of cross-checking is that
+    both ends submit, and putting a token in front of it means only officials
+    can do the thing every entrant needs to do.
+    """
+    return HTMLResponse(SUBMIT_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.post("/api/submit")
+async def submit_log(file: UploadFile = File(...),
+                     callsign: str = Form(default="")) -> JSONResponse:
+    """Take a full log and put it where cross-checking will find it.
+
+    The live feed only ever carries contacts an operator completed *during*
+    the contest, and only from the moment they pointed WSJT-X here. A full log
+    is the whole story: it is what turns "unmatched" into "verified" or "nil",
+    and what catches the half hour somebody spent with their reporting
+    misconfigured.
+
+    Submitted alongside the live logs rather than over them. A file is never
+    replaced -- an operator who submits twice gets two files and the store
+    keys contacts by content, so the duplicates fold into one.
+    """
+    raw = await file.read()
+    if len(raw) > MAX_LOG_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"That log is larger than "
+                                   f"{MAX_LOG_BYTES // (1024 * 1024)}MB.")
+    text = raw.decode("utf-8", "replace")
+
+    from radiorumble import adif
+
+    contacts = adif.parse(text)
+    if not contacts:
+        raise HTTPException(
+            status_code=400,
+            detail="No contacts could be read out of that file. It should be "
+                   "an ADIF log — the .adi your logging software writes.")
+
+    # Whose log it is comes from the log itself; the typed callsign is only a
+    # fallback for a file whose records disagree with each other.
+    stations = {q.station for q in contacts if q.station}
+    who = (callsign or "").strip().upper() or (
+        sorted(stations)[0] if len(stations) == 1 else "MIXED")
+
+    log_dir = contest.log_dir or contest.log_file.parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    target = log_dir / f"submitted-{_safe_name(who)}-{stamp}.adi"
+    target.write_text(text, encoding="utf-8")
+    log.info("log submitted: %s, %d contacts -> %s", who, len(contacts), target.name)
+
+    known = {c.upper() for t in contest.teams for c in t.callsigns}
+    return JSONResponse(
+        {
+            "accepted": True,
+            "callsign": who,
+            "contacts": len(contacts),
+            "stations": sorted(stations),
+            "rostered": sorted(s for s in stations if s in known),
+            "unrostered": sorted(s for s in stations if s not in known),
+            "first": contacts[0].when.isoformat() if contacts[0].when else None,
+            "last": contacts[-1].when.isoformat() if contacts[-1].when else None,
+            "file": target.name,
+        }
+    )
 
 
 @app.get("/api/health")

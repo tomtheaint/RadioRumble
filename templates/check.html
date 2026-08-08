@@ -65,7 +65,7 @@
 <div class="wrap">
   <header>
     <h1>Is it hearing me?</h1>
-    <a class="back" href="./">← scoreboard</a>
+    <a class="back" href="./submit">submit your log →</a>
   </header>
 
   <div class="server">
@@ -77,14 +77,28 @@
   </div>
 
   <div class="how">
-    <b>Point WSJT-X here.</b> File → Settings → Reporting → UDP Server.
+    <b>Point WSJT-X here.</b> File → Settings → Reporting. Either box works —
+    use whichever one you have free.
     <ol>
-      <li>UDP Server: <code id="host-hint">this machine's address</code></li>
-      <li>UDP Server port: <code id="port-hint">2237</code></li>
-      <li>Tick <b>Accept UDP requests</b> is not needed — only the outgoing report is.</li>
+      <li>
+        <b>Secondary UDP Server</b> — tick <b>Enable logged contact ADIF
+        broadcast</b>, then
+        <code id="host-hint">this machine's address</code> and port
+        <code id="port2-hint">2333</code>.
+        <br><span style="color:var(--dim)">Usually free, because the box above
+        it is taken by JTAlert or GridTracker. Sends only completed contacts —
+        so <b>you appear here after your first contact</b>, not before.</span>
+      </li>
+      <li style="margin-top:6px">
+        <b>UDP Server</b> — the same address, port
+        <code id="port-hint">2237</code>.
+        <br><span style="color:var(--dim)">Only if nothing else is using it.
+        <b>You appear within about fifteen seconds without working anybody</b>,
+        because WSJT-X announces itself on this one.</span>
+      </li>
     </ol>
-    Your callsign appears below within about fifteen seconds of WSJT-X starting,
-    without you working anybody: it announces itself on its own.
+    Not sure? Use the secondary, log one contact with anybody, and check this
+    page.
   </div>
 
   <p class="count" id="count"></p>
@@ -119,9 +133,11 @@
     document.getElementById("server-state").textContent =
       up ? "The listener is running" : "The listener is not running";
     document.getElementById("server-sub").textContent =
-      up ? ("Listening on UDP port " + data.port + " — set that as your UDP Server port.")
+      up ? ("Listening on UDP " + (data.ports || []).join(" and "))
          : "Nothing is being received. Find an organiser.";
-    document.getElementById("port-hint").textContent = data.port;
+    var ports = data.ports || [];
+    document.getElementById("port-hint").textContent = ports[0] || 2237;
+    document.getElementById("port2-hint").textContent = ports[1] || 2333;
     document.getElementById("host-hint").textContent = location.hostname;
 
     var rows = data.stations || [];

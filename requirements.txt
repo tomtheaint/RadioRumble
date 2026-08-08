@@ -6,3 +6,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27      # [standard] brings the websocket implementation
 watchdog>=4.0                # notices the log file growing
+
+# Reading an uploaded log. FastAPI needs this for multipart form data,
+# which is how a submitted ADIF file arrives.
+python-multipart>=0.0.9
