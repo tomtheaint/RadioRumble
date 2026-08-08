@@ -213,3 +213,79 @@ def test_a_shorter_crossing_beats_a_longer_one():
     for i, sq in enumerate(["SQ00", "SQ01", "SQ02", "SQ03", "SQ04"]):
         short.add(qso(call=f"W{i}", square=sq))
     assert short.standings()[0]["score"] == 995
+
+
+# --------------------------------------------------------------- the extent
+
+def test_the_grid_board_is_the_lower_48_by_default():
+    """Alaska is 207 of the 683 squares that touch the country -- 30% of the
+    board, and nearly all of it sea nobody works in a two-hour contest. A
+    denominator that big makes the fraction held meaningless."""
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    grid_states = config.load_grid_states()
+    board = TerritoryMap("grid", grid_states)
+    assert board.extent == "conus"
+    assert board.total == 469
+    assert not any("Alaska" in states for states in
+                   (grid_states[s] for s in board.all_territories()))
+
+
+def test_the_whole_country_is_available_when_asked_for():
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    board = TerritoryMap("grid", config.load_grid_states(), extent="all")
+    assert board.total == 683
+
+
+def test_narrowing_the_board_leaves_the_state_board_alone():
+    """51 states either way -- the extent is about squares, not about which
+    states exist."""
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    grid_states = config.load_grid_states()
+    assert TerritoryMap("state", grid_states, extent="conus").total == 51
+    assert TerritoryMap("state", grid_states, extent="all").total == 51
+
+
+def test_an_alaskan_square_takes_nothing_on_the_narrowed_board():
+    """It still scores as a contact -- it just isn't a piece of this board."""
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    grid_states = config.load_grid_states()
+    alaskan = next(s for s, states in grid_states.items() if states == ("Alaska",))
+    assert TerritoryMap("grid", grid_states).claimed_by(alaskan) == ()
+    assert TerritoryMap("grid", grid_states, extent="all").claimed_by(alaskan) == (alaskan,)
+
+
+def test_neighbours_stop_at_the_edge_of_the_board():
+    """Connect and traverse walk this graph; a chain must not run out through
+    a square that isn't in play."""
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    board = TerritoryMap("grid", config.load_grid_states())
+    live = board.all_territories()
+    for square in list(live)[:60]:
+        assert all(n in live for n in board.neighbours(square))
+
+
+def test_the_board_reports_where_each_square_is():
+    """The page draws squares from this and nothing else: a 2-by-1 degree box
+    follows from its centre, so only the centre has to be sent."""
+    import radiorumble.config as config
+    from radiorumble.territory import TerritoryMap
+
+    geometry = TerritoryMap("grid", config.load_grid_states()).geometry()
+    assert len(geometry) == 469
+    kansas = next(g for g in geometry if g["name"] == "EM28")
+    assert kansas["region"] == "conus"
+    # EM28 is the 2-by-1 box whose centre is eastern Kansas, near Kansas City.
+    assert (kansas["lat"], kansas["lon"]) == (38.5, -95.0)
+    assert "Kansas" in kansas["states"]
+    # The state board draws itself from its outlines and needs none of this.
+    assert TerritoryMap("state", config.load_grid_states()).geometry() == []

@@ -105,6 +105,20 @@
   }
   svg.map path.state.owned { stroke: rgba(255,255,255,.35); stroke-width: .8; }
   svg.map path.state:hover { stroke: #fff; stroke-width: 1.4; }
+
+  /* The grid board. States stop being pieces and become the backdrop: a
+     square's name says nothing about where it is, so you need the coastline
+     under it to read the map at all. */
+  svg.map.gridboard path.state { fill: #222b3a; stroke: #46536e; stroke-width: .7; }
+  svg.map.gridboard path.state:hover { stroke: #46536e; stroke-width: .7; }
+  svg.map path.square {
+    fill: none; stroke: rgba(255,255,255,.13); stroke-width: .45;
+    transition: fill .45s ease;
+  }
+  /* Held squares are translucent so the coast still shows through: at 683
+     pieces an opaque board is a quilt with no country under it. */
+  svg.map path.square.owned { fill-opacity: .62; stroke: rgba(255,255,255,.3); }
+  svg.map path.square:hover { stroke: #fff; stroke-width: 1.2; }
   canvas.globe { display: block; width: 100%; height: auto; cursor: grab; }
   canvas.globe:active { cursor: grabbing; }
 
@@ -306,23 +320,36 @@
       });
     }
 
-    // The same transform the lower 48 was fitted with, so a station's home
-    // grid can be dropped onto the map it is drawn on.
-    var placer = null;
-    function fitWithPlacer(list, x, y, w, h) {
+    // Keep the transform each panel was fitted with. The lower 48 is what a
+    // station's home grid is dropped onto; all three are what the grid board
+    // needs, because a square off Anchorage belongs in the Alaska inset and
+    // nowhere near Oregon.
+    var fitted = {};
+    function fitPanel(name, list, x, y, w, h) {
       var out = fit(list, x, y, w, h);
-      placer = fit.lastTransform;
+      fitted[name] = fit.lastTransform;
       return out;
     }
 
-    var conus = fitWithPlacer(groups.conus, 8, 4, width - 16, height - 74);
-    var t = placer;
+    var conus = fitPanel("conus", groups.conus, 8, 4, width - 16, height - 74);
+    var t = fitted.conus;
+
+    // Where a coordinate lands inside one panel. The projection has to be the
+    // panel's own or the shape is right and the position is not.
+    function placeIn(region, lat, lon) {
+      var tr = fitted[region];
+      if (!tr) { return null; }
+      var p = projectionFor(region)(lon, lat);
+      return [p[0] * tr.k + tr.dx, p[1] * tr.k + tr.dy];
+    }
+
     return {
       shapes: [].concat(
         conus,
-        fit(groups.Alaska, 10, height - 168, 210, 160),
-        fit(groups.Hawaii, 232, height - 108, 110, 96)
+        fitPanel("Alaska", groups.Alaska, 10, height - 168, 210, 160),
+        fitPanel("Hawaii", groups.Hawaii, 232, height - 108, 110, 96)
       ),
+      placeIn: placeIn,
       // Alaska and Hawaii homes would land off the lower-48 transform, so
       // they are simply not placed rather than drawn somewhere wrong.
       place: function (lat, lon) {
@@ -333,30 +360,78 @@
     };
   }
 
+  // A grid square is 2 degrees of longitude by 1 of latitude, so its outline
+  // follows from its centre and needs no data of its own. Drawn as four
+  // projected corners rather than a rectangle: the projection is conic, so a
+  // square of the globe is not a square of the screen, and an axis-aligned box
+  // would visibly disagree with the coastline underneath it.
+  function squarePath(paths, sq) {
+    var half = { lon: 1.0, lat: 0.5 };
+    var corners = [
+      [sq.lat - half.lat, sq.lon - half.lon],
+      [sq.lat - half.lat, sq.lon + half.lon],
+      [sq.lat + half.lat, sq.lon + half.lon],
+      [sq.lat + half.lat, sq.lon - half.lon]
+    ];
+    var pts = [];
+    for (var i = 0; i < corners.length; i++) {
+      var p = paths.placeIn(sq.region, corners[i][0], corners[i][1]);
+      if (!p) { return ""; }
+      pts.push(p[0].toFixed(1) + "," + p[1].toFixed(1));
+    }
+    return "M" + pts.join("L") + "Z";
+  }
+
   /* ================================================================== *
    * Conquest: the map of the United States
    * ================================================================== */
 
   var mapPaths = null;
+  var gridBoard = null;      // the squares, fetched once when playing on them
+  var drawnBoard = null;     // which board the SVG currently holds
+
+  function onGrid() {
+    return ((state.map || {}).territory === "grid");
+  }
 
   function renderMap() {
     var svg = document.getElementById("usmap");
     var info = state.map || { owners: {}, colors: {} };
+    var board = onGrid() ? "grid" : "state";
 
+    // The states are the backdrop on either board. On the grid board they are
+    // drawn but never coloured: you need to see which square is over Kansas,
+    // and a square on its own tells you nothing.
     if (!mapPaths && usGeo) {
       mapPaths = buildUsPaths(usGeo, 960, 600);
-      svg.innerHTML =
-        '<g id="states">' + mapPaths.shapes.map(function (s) {
-          return '<path class="state" data-name="' + esc(s.name) + '" d="' + s.d + '"></path>';
-        }).join("") + "</g><g id=\"homes\"></g>";
-      wireMapHover(svg, info);
     }
     if (!mapPaths) { return; }
+
+    if (drawnBoard !== board) {
+      var pieces = '<g id="states">' + mapPaths.shapes.map(function (s) {
+        return '<path class="state" data-name="' + esc(s.name) + '" d="' + s.d + '"></path>';
+      }).join("") + "</g>";
+      if (board === "grid") {
+        if (!gridBoard) { return; }        // still loading; drawn when it lands
+        pieces += '<g id="squares">' + gridBoard.map(function (sq) {
+          var d = squarePath(mapPaths, sq);
+          if (!d) { return ""; }
+          return '<path class="square" data-name="' + esc(sq.name) +
+                 '" data-where="' + esc((sq.states || []).join(", ")) +
+                 '" d="' + d + '"></path>';
+        }).join("") + "</g>";
+      }
+      svg.innerHTML = pieces + '<g id="homes"></g>';
+      svg.classList.toggle("gridboard", board === "grid");
+      wireMapHover(svg, info);
+      drawnBoard = board;
+    }
     renderHomes(svg);
 
     // Recolour in place rather than rebuilding: the CSS transition on fill is
-    // what makes a state visibly change hands.
-    svg.querySelectorAll("path.state").forEach(function (el) {
+    // what makes a piece visibly change hands.
+    var selector = board === "grid" ? "path.square" : "path.state";
+    svg.querySelectorAll(selector).forEach(function (el) {
       var owner = info.owners[el.dataset.name];
       var color = owner ? info.colors[owner] : null;
       el.setAttribute("fill", color || "");
@@ -365,11 +440,14 @@
     });
 
     var held = Object.keys(info.owners).length;
-    var total = info.total_states || 51;
-    var note = held + " of " + total + " states held · " +
-      (info.claim_rule === "most" ? "most contacts holds a state" : "first contact claims a state");
+    var total = info.total_states || (board === "grid" ? 683 : 51);
+    var piece = board === "grid" ? "square" : "state";
+    var note = held + " of " + total + " " + piece + "s held · " +
+      (info.claim_rule === "most"
+        ? "most contacts holds a " + piece
+        : "first contact claims a " + piece);
     if (state.scarcity) {
-      note = held + " of " + total + " taken · next state is worth " +
+      note = held + " of " + total + " taken · next " + piece + " is worth " +
              state.scarcity.next_value + " points";
     }
     document.getElementById("map-note").textContent = note;
@@ -402,13 +480,16 @@
   function wireMapHover(svg, info) {
     var tip = document.getElementById("map-tip");
     svg.addEventListener("mousemove", function (ev) {
-      var el = ev.target.closest ? ev.target.closest("path.state") : null;
+      var el = ev.target.closest ? ev.target.closest("path.square, path.state") : null;
       if (!el) { tip.style.opacity = 0; return; }
       var name = el.dataset.name;
       var owners = (state.map && state.map.owners) || {};
       var owner = owners[name];
       var team = (state.standings || []).filter(function (t) { return t.abbr === owner; })[0];
-      tip.innerHTML = "<b>" + esc(name) + "</b>" +
+      // A square's name says nothing about where it is, so it carries the
+      // states it covers -- which is the answer to "where is EM28?".
+      var where = el.dataset.where ? '<span class="own">' + esc(el.dataset.where) + "</span>" : "";
+      tip.innerHTML = "<b>" + esc(name) + "</b>" + where +
         '<span class="own">' + (team ? esc(team.name) : "unclaimed") + "</span>";
       var box = svg.getBoundingClientRect();
       tip.style.left = (ev.clientX - box.left) + "px";
@@ -707,13 +788,32 @@
   function ensureGeometry(view) {
     if (view === "usmap" && !usGeo) {
       return fetch(BASE + "/static/us-states.json").then(function (r) { return r.json(); })
-        .then(function (g) { usGeo = g; });
+        .then(function (g) { usGeo = g; }).then(function () { return ensureBoard(); });
     }
+    if (view === "usmap") { return ensureBoard(); }
     if (view === "globe" && !worldGeo) {
       return fetch(BASE + "/static/world-land.json").then(function (r) { return r.json(); })
         .then(function (g) { worldGeo = g; });
     }
     return Promise.resolve();
+  }
+
+  // The squares, fetched once. They never change during a contest, so pushing
+  // them down the websocket on every log line would be several times the size
+  // of the scoreboard they decorate.
+  var boardPending = null;
+  function ensureBoard() {
+    if (!onGrid() || gridBoard) { return Promise.resolve(); }
+    if (boardPending) { return boardPending; }
+    boardPending = fetch(BASE + "/api/board")
+      .then(function (r) { return r.json(); })
+      .then(function (b) {
+        gridBoard = (b && b.territories) || [];
+        drawnBoard = null;            // force a redraw now the pieces exist
+      })
+      .catch(function () { gridBoard = []; })
+      .then(function () { boardPending = null; });
+    return boardPending;
   }
 
   function applyView(view) {

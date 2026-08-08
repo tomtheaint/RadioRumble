@@ -173,10 +173,28 @@ starts an argument.
 
 - **`"state"`** — 51 pieces, borders everyone can picture, and a contact often
   claims two at once because a grid square is bigger than a state line.
-- **`"grid"`** — 683 squares over the same country, each claimed
+- **`"grid"`** — 469 squares over the same country, each claimed
   unambiguously. A far longer game, and much more about coverage than luck.
 
 `traverse` is states only: a grid board has no coastline.
+
+### How much country is on the grid board
+
+`extent` decides, and only matters for `territory = "grid"`:
+
+| `extent` | Board |
+|---|---|
+| `conus` | The lower 48 — **469 squares**. Every one is reachable in a short contest and legible on the map. The default. |
+| `all` | **683 squares**, adding Alaska and Hawaii. |
+
+Alaska alone is **207 of those 683 — 30% of the board**, and nearly all of it
+is Aleutian sea that nobody will work in two hours. On the state board Alaska
+is one piece in fifty-one and costs nothing; on the grid board it is a third
+of the denominator, so "68 of 683 held" stops meaning anything and the map has
+to squeeze 207 squares into an inset the size of a postage stamp.
+
+Narrowing the board never costs anyone a contact. An Alaskan station still
+scores exactly as it did — it just doesn't take a square.
 
 ## Scoring modifiers
 
@@ -400,6 +418,7 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/` | The scoreboard |
 | `/ws` | Websocket; pushes a full snapshot whenever a log grows |
 | `/api/scoreboard` | The same snapshot over HTTP, for anything that would rather poll |
+| `/api/board` | The pieces of the board and where they are. Fetched once by the page |
 | `/api/health` | Status, how many contacts are held, how many are voided |
 | `/admin` | The review screen |
 | `/api/contacts` | Every contact with its status. Needs the admin token |

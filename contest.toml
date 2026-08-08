@@ -106,6 +106,26 @@ special_calls = []
 #             claimed it first. States change hands all afternoon — this is
 #             the version that behaves like a game.
 claim = "first"
+#  Which board it is played on.
+#    "state"  51 pieces. Borders everyone can picture, and a contact often
+#             claims two at once because a grid square is bigger than a state
+#             line. A short, fast game — the map fills up inside an hour.
+#    "grid"   683 squares. Each contact claims exactly one, so there is no
+#             ambiguity and no free second state; the game is far longer and
+#             far more about coverage than about luck.
+#             Note that 207 of the 683 are Alaska, so a team that can work
+#             Alaska has a lot of board available to it.
+territory = "grid"     # "state" (51 pieces) or "grid" (683 squares)
+
+#  How much of the country is on the grid board. Ignored on the state board.
+#    "conus"  the lower 48, 469 squares. Every one is reachable in a short
+#             contest and legible on the map, so the fraction held means
+#             something.
+#    "all"    683 squares. Alaska alone is 207 of them -- 30% of the board,
+#             nearly all of it sea nobody will work in two hours.
+#  Narrowing the board never costs anyone a contact: an Alaskan station still
+#  scores, it just doesn't take a square.
+extent = "conus"       # "conus" (469) or "all" (683, includes AK and HI)
 
 [dx]
 #  A DX contact is worth more than a domestic one is in classic mode, because
@@ -127,6 +147,26 @@ count_domestic = false
 #  ones while they are still awkward.
 base_points = 10
 step_points = 5
+#  Which board it is played on.
+#    "state"  51 pieces. Borders everyone can picture, and a contact often
+#             claims two at once because a grid square is bigger than a state
+#             line. A short, fast game — the map fills up inside an hour.
+#    "grid"   683 squares. Each contact claims exactly one, so there is no
+#             ambiguity and no free second state; the game is far longer and
+#             far more about coverage than about luck.
+#             Note that 207 of the 683 are Alaska, so a team that can work
+#             Alaska has a lot of board available to it.
+territory = "state"    # "state" (51 pieces) or "grid" (683 squares)
+
+#  How much of the country is on the grid board. Ignored on the state board.
+#    "conus"  the lower 48, 469 squares. Every one is reachable in a short
+#             contest and legible on the map, so the fraction held means
+#             something.
+#    "all"    683 squares. Alaska alone is 207 of them -- 30% of the board,
+#             nearly all of it sea nobody will work in two hours.
+#  Narrowing the board never costs anyone a contact: an Alaskan station still
+#  scores, it just doesn't take a square.
+extent = "conus"       # "conus" (469) or "all" (683, includes AK and HI)
 
 [connect]
 #  Territory only counts when it touches territory you already hold. Twelve
@@ -134,6 +174,16 @@ step_points = 5
 #  Score is the largest unbroken run; reaching `target` wins outright.
 target = 4
 territory = "state"    # "state" (51 pieces) or "grid" (683 squares)
+
+#  How much of the country is on the grid board. Ignored on the state board.
+#    "conus"  the lower 48, 469 squares. Every one is reachable in a short
+#             contest and legible on the map, so the fraction held means
+#             something.
+#    "all"    683 squares. Alaska alone is 207 of them -- 30% of the board,
+#             nearly all of it sea nobody will work in two hours.
+#  Narrowing the board never costs anyone a contact: an Alaskan station still
+#  scores, it just doesn't take a square.
+extent = "conus"       # "conus" (469) or "all" (683, includes AK and HI)
 
 [traverse]
 #  Cross the country with an unbroken chain of held states.

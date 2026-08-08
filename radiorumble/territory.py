@@ -25,17 +25,38 @@ DEFAULT_ADJACENCY = BASE_DIR / "static" / "adjacency.json"
 STATE = "state"
 GRID = "grid"
 
+CONUS = "conus"
+ALL = "all"
+#  Off the lower 48. Both are states like any other on the state board; on the
+#  grid board they are the difference between a board somebody can finish and
+#  one where a third of the pieces are Aleutian sea.
+OUTLYING = ("Alaska", "Hawaii")
+
 
 class TerritoryMap:
     """The board a map game is played on."""
 
-    def __init__(self, kind: str, grid_states: dict, adjacency_path: Path = DEFAULT_ADJACENCY):
+    def __init__(self, kind: str, grid_states: dict, adjacency_path: Path = DEFAULT_ADJACENCY,
+                 extent: str = CONUS):
         self.kind = kind if kind in (STATE, GRID) else STATE
+        self.extent = extent if extent in (CONUS, ALL) else CONUS
         self.grid_states = grid_states
         self._adjacency: dict[str, list[str]] = {}
         self._edges: dict[str, list[str]] = {}
         if self.kind == STATE:
             self._load_adjacency(adjacency_path)
+        #  Which squares are pieces. Alaska is 207 of the 683 that touch the
+        #  country -- 30% of the board, nearly all of it water nobody will work
+        #  in a two-hour contest -- so the default board is the lower 48 and
+        #  the whole thing is opt-in. It only narrows the *board*: a contact
+        #  into Alaska still scores, it just doesn't take a square.
+        self._in_play = self._squares_in_play()
+
+    def _squares_in_play(self) -> dict:
+        if self.kind != GRID or self.extent == ALL:
+            return self.grid_states
+        return {square: states for square, states in self.grid_states.items()
+                if any(state not in OUTLYING for state in states)}
 
     def _load_adjacency(self, path: Path) -> None:
         if not path.exists():
@@ -59,23 +80,54 @@ class TerritoryMap:
         if self.kind == GRID:
             # Only squares that touch the country are part of the board;
             # otherwise a contact with Germany would claim territory.
-            return (square,) if square in self.grid_states else ()
+            return (square,) if square in self._in_play else ()
         return tuple(self.grid_states.get(square, ()))
 
     def neighbours(self, territory: str) -> tuple[str, ...]:
         if self.kind == GRID:
             return tuple(n for n in maidenhead.neighbours(territory)
-                         if n in self.grid_states)
+                         if n in self._in_play)
         return tuple(self._adjacency.get(territory, ()))
 
     def all_territories(self) -> set[str]:
         if self.kind == GRID:
-            return set(self.grid_states)
+            return set(self._in_play)
         return {s for states in self.grid_states.values() for s in states}
 
     @property
     def total(self) -> int:
         return len(self.all_territories())
+
+    def geometry(self) -> list[dict]:
+        """Where each piece of the board is, for something that has to draw it.
+
+        Only the grid board needs this. States are drawn from their outlines,
+        which the page already has; a grid square is a 2-by-1 degree rectangle
+        and its position follows from its name, so sending the centre is
+        enough and the corners are the client's arithmetic.
+
+        `region` is which of the three panels a square belongs in. The map
+        draws Alaska and Hawaii as insets, because at true scale Alaska is
+        half the picture -- so a square off Anchorage has to be told apart
+        from one over Kansas or it lands in the sea near Oregon.
+        """
+        if self.kind != GRID:
+            return []
+        out = []
+        for square in sorted(self._in_play):
+            position = maidenhead.to_latlon(square)
+            if position is None:
+                continue
+            states = self._in_play.get(square, ())
+            if "Alaska" in states:
+                region = "Alaska"
+            elif "Hawaii" in states:
+                region = "Hawaii"
+            else:
+                region = "conus"
+            out.append({"name": square, "lat": position[0], "lon": position[1],
+                        "region": region, "states": list(states)})
+        return out
 
     def edge(self, side: str) -> tuple[str, ...]:
         """States along one side of the country. Empty on the grid board."""

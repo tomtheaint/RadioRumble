@@ -104,14 +104,23 @@ class ConquestMode(Mode):
         # "state" is the familiar board; "grid" is 683 squares over the same
         # country, which turns the same game into one about coverage.
         self.territory_kind = self.settings.get("territory", "state")
+        # Only means anything on the grid board; the state board is all 51
+        # either way.
+        self.territory_extent = self.settings.get("extent", "conus")
 
     def board_map(self, board):
         """The territory board, built once per scoreboard."""
         from .territory import TerritoryMap
 
         cached = getattr(board, "_territory_map", None)
-        if cached is None or cached.kind != self.territory_kind:
-            cached = TerritoryMap(self.territory_kind, board.contest.grid_states)
+        # getattr with a default rather than a bare attribute: a test can hand
+        # the scoreboard a stand-in board, and asking one to grow a field it
+        # has no opinion about is the cache's problem, not the double's.
+        if (cached is None or cached.kind != self.territory_kind
+                or getattr(cached, "extent", self.territory_extent)
+                != self.territory_extent):
+            cached = TerritoryMap(self.territory_kind, board.contest.grid_states,
+                                  extent=self.territory_extent)
             cached.set_edges(self.settings.get("edges", {}) or {})
             board._territory_map = cached
         return cached

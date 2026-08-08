@@ -119,6 +119,28 @@ async def scoreboard() -> JSONResponse:
     return JSONResponse(ingest.snapshot())
 
 
+@app.get("/api/board")
+async def board() -> JSONResponse:
+    """Where the pieces of the board are, for the page to draw.
+
+    Fetched once and cached by the client, the way the state outlines are:
+    683 squares never change during a contest, and pushing them down the
+    websocket on every log line would be several times the size of the
+    scoreboard they decorate.
+    """
+    from radiorumble.territory import TerritoryMap
+
+    kind, extent = "state", "conus"
+    mode = getattr(contest, "mode_settings", {}) or {}
+    if contest.mode in ("conquest", "scarcity", "connect"):
+        kind = str(mode.get("territory", "state"))
+        extent = str(mode.get("extent", "conus"))
+    board_map = TerritoryMap(kind, contest.grid_states, extent=extent)
+    return JSONResponse({"kind": board_map.kind,
+                         "total": board_map.total,
+                         "territories": board_map.geometry()})
+
+
 @app.get("/api/health")
 async def health() -> JSONResponse:
     return JSONResponse(
