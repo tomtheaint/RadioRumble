@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Listener</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
+    --text:#e8edf5; --muted:#8b97ad; --dim:#5d6980; --live:#3fd07f; --bad:#ff8080;
+    --warm:#ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 16px 60px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+           padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  h1 { font-size:20px; margin:0; }
+  a.back { color:#4da3ff; text-decoration:none; font-size:13px; }
+  a.back:hover { text-decoration:underline; }
+  .spacer { margin-left:auto; }
+
+  input[type=password], input[type=text] {
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    border-radius:7px; padding:6px 10px; font:inherit; font-size:13px; }
+  button { background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+           border-radius:7px; padding:6px 13px; font:inherit; font-size:13px;
+           cursor:pointer; }
+  button:hover { border-color:#3a4a66; }
+  button.go { background:#1c5f3a; border-color:#2b7d4f; }
+  button.stop { background:#5f1c1c; border-color:#8a2f2f; }
+  button:disabled { opacity:.45; cursor:default; }
+
+  .state { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           padding:14px 16px; border:1px solid var(--line); border-radius:10px;
+           background:var(--panel); margin-bottom:16px; }
+  .dot { width:12px; height:12px; border-radius:50%; flex:0 0 auto; }
+  .dot.up { background:var(--live); box-shadow:0 0 0 4px rgba(63,208,127,.16); }
+  .dot.down { background:var(--bad); box-shadow:0 0 0 4px rgba(255,128,128,.16); }
+  .state .where { font-size:13px; color:var(--muted); }
+  .err { color:var(--bad); font-size:13px; }
+
+  .tiles { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+           margin-bottom:18px; }
+  .tile { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          padding:12px 14px; }
+  .tile .n { font-size:23px; font-weight:700; }
+  .tile .l { font-size:12px; color:var(--muted); margin-top:2px; }
+
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase;
+       letter-spacing:.04em; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.stale td { opacity:.55; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px;
+          font-weight:700; }
+  .pill.live { background:rgba(63,208,127,.16); color:var(--live); }
+  .pill.gone { background:rgba(255,128,128,.14); color:var(--bad); }
+  .tx { color:var(--warm); font-weight:700; }
+  .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px;
+          color:var(--muted); }
+  .note { color:var(--muted); font-size:13px; margin:14px 0 6px; }
+  .empty { border:1px dashed var(--line); border-radius:10px; padding:24px;
+           text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>WSJT-X listener</h1>
+    <a class="back" href="./check">public check page</a>
+    <span class="spacer"></span>
+    <input type="password" id="token" placeholder="admin token" autocomplete="off" />
+    <a class="back" href="./">← scoreboard</a>
+  </header>
+
+  <div class="state">
+    <span class="dot down" id="dot"></span>
+    <div>
+      <b id="state-text">not connected</b>
+      <div class="where" id="where"></div>
+    </div>
+    <span class="spacer"></span>
+    <button class="go" id="start">Start</button>
+    <button class="stop" id="stop">Stop</button>
+    <button id="forget" title="Clear who has been heard. Logged contacts are untouched.">
+      Clear presence
+    </button>
+  </div>
+  <div class="err" id="err"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <p class="note" id="note"></p>
+  <div id="table-host"></div>
+
+  <p class="note">
+    Contacts are written into the log directory as they arrive, one file per
+    station, and picked up by the scoreboard like any other log. Stopping the
+    listener does not remove anything already logged.
+  </p>
+</div>
+
+<script>
+(function () {
+  var BASE = location.pathname.replace(/\/listener\/?$/, "").replace(/\/$/, "");
+  var skew = 0;
+
+  var tokenBox = document.getElementById("token");
+  tokenBox.value = sessionStorage.getItem("rr-admin") || "";
+  tokenBox.addEventListener("change", function () {
+    sessionStorage.setItem("rr-admin", tokenBox.value);
+    poll();
+  });
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function ago(seconds) {
+    if (seconds < 5) { return "just now"; }
+    if (seconds < 90) { return Math.round(seconds) + "s"; }
+    if (seconds < 5400) { return Math.round(seconds / 60) + " min"; }
+    return Math.round(seconds / 3600) + " h";
+  }
+
+  function headers() {
+    return { "X-Admin-Token": tokenBox.value || "" };
+  }
+
+  function act(path) {
+    fetch(BASE + "/api/listener/" + path, { method: "POST", headers: headers() })
+      .then(function (r) {
+        if (r.status === 403) { throw new Error("admin token required"); }
+        return r.json();
+      })
+      .then(function (d) {
+        document.getElementById("err").textContent = d.message || "";
+        poll();
+      })
+      .catch(function (e) { document.getElementById("err").textContent = e.message; });
+  }
+
+  document.getElementById("start").onclick = function () { act("start"); };
+  document.getElementById("stop").onclick = function () { act("stop"); };
+  document.getElementById("forget").onclick = function () {
+    if (confirm("Forget every station heard so far?\n\nLogged contacts are not touched.")) {
+      act("forget");
+    }
+  };
+
+  function tiles(d) {
+    var w = d.windows || {};
+    function tile(n, l) { return '<div class="tile"><div class="n">' + n + '</div><div class="l">' + l + "</div></div>"; }
+    return [
+      tile(d.live_stations || 0, "reporting now"),
+      tile((d.stations || []).length, "heard in total"),
+      tile((w.minute || {}).packets || 0, "packets, last minute"),
+      tile((w.hour || {}).packets || 0, "packets, last hour"),
+      tile((w.day || {}).packets || 0, "packets, last day"),
+      tile(d.contacts || 0, "contacts written")
+    ].join("");
+  }
+
+  function render(d) {
+    document.getElementById("dot").className = "dot " + (d.running ? "up" : "down");
+    document.getElementById("state-text").textContent =
+      d.running ? "Listening" : "Stopped";
+    document.getElementById("where").textContent =
+      "UDP " + d.host + ":" + d.port + " · writing to " + d.log_dir +
+      (d.started_at ? " · since " + new Date(d.started_at).toLocaleTimeString() : "");
+    document.getElementById("start").disabled = !!d.running;
+    document.getElementById("stop").disabled = !d.running;
+    if (d.error) { document.getElementById("err").textContent = d.error; }
+    document.getElementById("tiles").innerHTML = tiles(d);
+
+    var rows = d.stations || [];
+    document.getElementById("note").textContent = rows.length
+      ? "Sorted by who was heard most recently. A station goes pale after 90 seconds of silence — two missed heartbeats."
+      : "";
+    if (!rows.length) {
+      document.getElementById("table-host").innerHTML =
+        '<div class="empty">Nothing heard yet. Point a copy of WSJT-X at UDP ' +
+        d.port + " and it appears here within about fifteen seconds.</div>";
+      return;
+    }
+    document.getElementById("table-host").innerHTML =
+      "<table><thead><tr>" +
+      "<th>Station</th><th>Grid</th><th>Band</th><th>Doing</th><th>From</th>" +
+      '<th class="num">Last heard</th>' +
+      '<th class="num">Min</th><th class="num">Hour</th><th class="num">Day</th>' +
+      '<th class="num">Contacts</th>' +
+      "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        var quiet = Math.max(0, r.quiet_for + skew);
+        var doing = r.transmitting ? '<span class="tx">transmitting</span>'
+                  : (r.dx_call ? "working " + esc(r.dx_call) : "");
+        return '<tr class="' + (r.live ? "" : "stale") + '">' +
+          "<td><b>" + esc(r.call || r.key) + "</b> " +
+          '<span class="pill ' + (r.live ? "live" : "gone") + '">' +
+          (r.live ? "live" : "quiet") + "</span></td>" +
+          "<td>" + esc(r.grid || "—") + "</td>" +
+          "<td>" + esc(r.band ? r.band + " " + (r.mode || "") : "—") + "</td>" +
+          "<td>" + doing + "</td>" +
+          '<td class="mono">' + esc(r.address || "") +
+          (r.version ? " · " + esc(r.version) : "") + "</td>" +
+          '<td class="num">' + ago(quiet) + "</td>" +
+          '<td class="num">' + r.windows.minute.packets + "</td>" +
+          '<td class="num">' + r.windows.hour.packets + "</td>" +
+          '<td class="num">' + r.windows.day.packets + "</td>" +
+          '<td class="num">' + r.qsos + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  function poll() {
+    fetch(BASE + "/api/listener", { cache: "no-store", headers: headers() })
+      .then(function (r) {
+        if (r.status === 403) { throw new Error("admin token required"); }
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.server_time) { skew = (Date.now() - Date.parse(d.server_time)) / 1000; }
+        document.getElementById("err").textContent = d.error || "";
+        render(d);
+      })
+      .catch(function (e) {
+        document.getElementById("state-text").textContent = e.message;
+        document.getElementById("dot").className = "dot down";
+      });
+  }
+
+  poll();
+  setInterval(poll, 4000);
+})();
+</script>
+</body>
+</html>

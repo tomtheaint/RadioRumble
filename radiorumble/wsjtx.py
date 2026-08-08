@@ -168,6 +168,76 @@ def band_for(freq_hz: int) -> str:
     return ""
 
 
+@dataclass
+class Presence:
+    """Who is out there, from a datagram that isn't a contact.
+
+    WSJT-X talks constantly: a heartbeat every fifteen seconds and a status
+    message whenever anything changes. Neither is a contact, and `decode`
+    rightly ignores both -- but between them they are the only way to know a
+    station is connected *before* it works anybody, which is exactly the
+    question an operator has while setting up.
+
+    Status carries the operator's own callsign and grid, so a station
+    identifies itself the moment WSJT-X is pointed here.
+    """
+
+    kind: int
+    instance: str = ""          # the sending instance's id, "WSJT-X" by default
+    call: str = ""              # the operator's own callsign
+    grid: str = ""              # ...and their own grid
+    freq_hz: int = 0
+    mode: str = ""
+    dx_call: str = ""           # who they are working right now
+    transmitting: bool = False
+    version: str = ""
+
+    @property
+    def band(self) -> str:
+        return band_for(self.freq_hz)
+
+
+def describe(data: bytes) -> Presence:
+    """What a datagram says about the station that sent it.
+
+    Every message type is read far enough to be useful and no further: a
+    heartbeat identifies the instance and its version, a status message adds
+    the callsign, grid, band and what it is doing. A contact is read by
+    `decode`; here it only says that one arrived.
+
+    Fields are read in the order WSJT-X writes them and stop at the first
+    short read, because a newer schema appends and an older one simply ends --
+    a datagram that runs out is a version difference, not a corruption.
+    """
+    reader = Reader(data)
+    if reader.uint32() != MAGIC:
+        raise ValueError("not a WSJT-X datagram")
+    reader.uint32()                       # schema
+    kind = reader.uint32()
+    found = Presence(kind=kind, instance=reader.string())
+
+    try:
+        if kind == HEARTBEAT:
+            reader.uint32()               # maximum schema this instance speaks
+            found.version = reader.string()
+        elif kind == STATUS:
+            found.freq_hz = reader.uint64()
+            found.mode = reader.string().upper()
+            found.dx_call = reader.string().upper()
+            reader.string()               # report
+            reader.string()               # tx mode
+            reader.boolean()              # tx enabled
+            found.transmitting = reader.boolean()
+            reader.boolean()              # decoding
+            reader.uint32()               # rx df
+            reader.uint32()               # tx df
+            found.call = reader.string().upper()
+            found.grid = reader.string().upper()
+    except ValueError:
+        pass                              # an older WSJT-X stops earlier
+    return found
+
+
 def decode(data: bytes) -> tuple[int, LoggedQso | None]:
     """Decode a datagram. Returns (message type, contact if it was one).
 

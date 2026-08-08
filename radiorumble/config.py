@@ -68,6 +68,9 @@ class Contest:
     #: what makes cross-checking possible: a contact can only be confirmed
     #: against the other operator's own log.
     log_dir: Path | None = None
+    #: The [listener] table, verbatim. The listener reads its own settings so
+    #: adding one never means adding a field here.
+    listener: dict = field(default_factory=dict)
     #: "team" pits schools against each other; "operator" splits every
     #: rostered callsign into its own entry, for a club's internal contest or
     #: an event open to all comers.
@@ -277,6 +280,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
         mode=mode,
         mode_settings=mode_settings,
         log_dir=log_dir or None,
+        listener=data.get("listener", {}) if isinstance(data.get("listener"), dict) else {},
         compete_as=compete_as,
         match_minutes=int(contest.get("match_minutes", 3)),
         bonuses=BonusRules.from_config(data.get("bonuses")),

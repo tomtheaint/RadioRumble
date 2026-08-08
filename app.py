@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from radiorumble import config
 from radiorumble.ingest import ContestIngest
+from radiorumble.listener import WsjtxListener
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("radiorumble")
@@ -35,12 +37,31 @@ ADMIN_TEMPLATE = BASE_DIR / "templates" / "admin.html"
 contest = config.load()
 ingest = ContestIngest(contest)
 
+#  Contacts arrive here as UDP from every operator's WSJT-X and are written
+#  into the log directory, where the file watcher picks them up like any other
+#  log. Run by the server rather than from a terminal so that whether it is
+#  alive is a page rather than a guess.
+_listener_cfg = contest.listener or {}
+listener = WsjtxListener(
+    log_dir=contest.log_dir or contest.log_file.parent,
+    host=str(_listener_cfg.get("host", "0.0.0.0")),
+    port=int(_listener_cfg.get("port", 2237)),
+    split=bool(_listener_cfg.get("split", True)),
+    fallback=contest.log_file,
+)
+
 # Voiding a contact changes somebody's score, so it is not something a
 # spectator gets to do. One shared token is the right weight for a two-hour
 # event: no accounts to create, and nothing to leave behind afterwards.
 # Generated if unset so the endpoints are never accidentally open.
 ADMIN_TOKEN = os.environ.get("RR_ADMIN_TOKEN") or secrets.token_urlsafe(16)
 ADMIN_TOKEN_GENERATED = "RR_ADMIN_TOKEN" not in os.environ
+
+
+def _iso_now() -> str:
+    """The server's clock, so a page can say how long ago something was
+    without trusting the viewer's laptop to agree about the time."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def require_admin(x_admin_token: str = Header(default="")) -> None:
@@ -94,9 +115,20 @@ async def lifespan(app: FastAPI):
     if ADMIN_TOKEN_GENERATED:
         log.info("admin token for this run: %s  (set RR_ADMIN_TOKEN to fix it)",
                  ADMIN_TOKEN)
+
+    if (contest.listener or {}).get("enabled", True):
+        started, message = listener.start()
+        # A port already taken is the ordinary failure -- rec.py is often
+        # still running from a rehearsal -- and it is worth saying plainly
+        # rather than dying. The scoreboard still works from files.
+        log.info("listener: %s", message) if started else log.warning("listener: %s", message)
+    else:
+        log.info("listener: disabled in contest.toml; start it from /listener")
+
     try:
         yield
     finally:
+        listener.stop()
         ingest.stop()
 
 
@@ -139,6 +171,78 @@ async def board() -> JSONResponse:
     return JSONResponse({"kind": board_map.kind,
                          "total": board_map.total,
                          "territories": board_map.geometry()})
+
+
+LISTENER_TEMPLATE = BASE_DIR / "templates" / "listener.html"
+CHECK_TEMPLATE = BASE_DIR / "templates" / "check.html"
+
+
+@app.get("/check", response_class=HTMLResponse)
+async def check_page() -> HTMLResponse:
+    """"Is it hearing me?" — the question every operator has while setting up.
+
+    Public on purpose. It is the page somebody looks at on their phone at ten
+    to two, and putting a token in front of it would mean the answer is only
+    available to the person who least needs it.
+    """
+    return HTMLResponse(CHECK_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.get("/api/stations")
+async def stations() -> JSONResponse:
+    """Who the listener has heard from. Public, minus the addresses.
+
+    A callsign and a grid are what an operator is broadcasting to the world
+    anyway; the address they are broadcasting it from is not, so it stays on
+    the admin side.
+    """
+    return JSONResponse(
+        {
+            "running": listener.running,
+            "port": listener.port,
+            "server_time": _iso_now(),
+            "stations": listener.stations(include_address=False),
+        }
+    )
+
+
+@app.get("/listener", response_class=HTMLResponse)
+async def listener_page() -> HTMLResponse:
+    """The control screen. The page is public; every action on it is not."""
+    return HTMLResponse(LISTENER_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.get("/api/listener", dependencies=[Depends(require_admin)])
+async def listener_status() -> JSONResponse:
+    status = listener.status(include_address=True)
+    status["server_time"] = _iso_now()
+    return JSONResponse(status)
+
+
+@app.post("/api/listener/start", dependencies=[Depends(require_admin)])
+async def listener_start() -> JSONResponse:
+    started, message = listener.start()
+    return JSONResponse({"started": started, "message": message,
+                         "running": listener.running})
+
+
+@app.post("/api/listener/stop", dependencies=[Depends(require_admin)])
+async def listener_stop() -> JSONResponse:
+    stopped, message = listener.stop()
+    return JSONResponse({"stopped": stopped, "message": message,
+                         "running": listener.running})
+
+
+@app.post("/api/listener/forget", dependencies=[Depends(require_admin)])
+async def listener_forget() -> JSONResponse:
+    """Clear the presence list without touching a single logged contact.
+
+    Everybody tests before the clock starts, and opening the contest with an
+    hour of rehearsal listed is a poor look. The logs are untouched -- this
+    forgets who was heard, not what was worked.
+    """
+    listener.forget()
+    return JSONResponse({"cleared": True})
 
 
 @app.get("/api/health")

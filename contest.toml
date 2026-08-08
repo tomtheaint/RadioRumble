@@ -95,6 +95,29 @@ special_calls = []
 
 
 #  ---------------------------------------------------------------------------
+#  The WSJT-X listener.
+#
+#  Operators point WSJT-X at this machine under Reporting -> UDP Server, and
+#  every contact they log arrives here as a datagram and is written straight
+#  into the log directory. Several instances can report to one server, which
+#  is what a multi-operator team wants.
+#
+#  Run by the server so it can be seen. rec.py still does the same job from a
+#  terminal, which is fine until the terminal is on a laptop behind a table
+#  and nobody can tell whether it is still alive.
+#  ---------------------------------------------------------------------------
+
+[listener]
+enabled = true         # start it with the server
+host = "0.0.0.0"       # every interface, so operators on the venue wifi reach it
+port = 2237            # WSJT-X's default
+
+#  One file per station callsign inside log_dir, which is what cross-checking
+#  needs. False writes everything into the contest's single log_file instead.
+split = true
+
+
+#  ---------------------------------------------------------------------------
 #  Per-mode settings. Only the table matching `mode` above is read.
 #  ---------------------------------------------------------------------------
 

@@ -321,19 +321,65 @@ something to depend on.
 
 ### Live, from WSJT-X
 
+The server listens itself. Point WSJT-X at this machine under
+**Reporting → UDP Server**, port 2237, and every time an operator presses Log
+the contact arrives as a UDP datagram, is decoded, and is appended as ADIF into
+the log directory — so a live station and a mailed-in file are
+indistinguishable by the time they reach the scoreboard. Several instances can
+report to one server, which is what a multi-operator team wants.
+
+It starts with the server and is configured in `[listener]`:
+
+```toml
+[listener]
+enabled = true
+host = "0.0.0.0"
+port = 2237
+split = true        # one file per station callsign, which cross-checking needs
+```
+
+#### “Is it hearing me?”
+
+**[`/check`](http://localhost:7373/check) is public and is the point.** Every
+operator has the same question while setting up, and before this the only way
+to answer it was to work somebody and hope.
+
+WSJT-X sends a heartbeat every fifteen seconds and a status message whenever
+anything changes, and a station's own callsign is in the status — so a rig
+appears on the check page within about fifteen seconds of being pointed here,
+**without having worked anybody**. It shows the callsign, grid, band, whether
+it is transmitting, and how long ago it was last heard. Addresses are not
+shown: a callsign is broadcast to the world anyway and an address is not.
+
+#### Controlling it
+
+**[`/listener`](http://localhost:7373/listener)** starts and stops it, and
+shows what it has heard — per station and in total, over the last minute, hour
+and day. The page is public; every action on it needs the admin token, like
+the review screen.
+
+*Clear presence* forgets who has been heard without touching a single logged
+contact. Everybody tests before the clock starts, and opening the contest with
+an hour of rehearsal listed is a poor look — but the contacts are the
+operator's log and are not ours to delete.
+
+A port already in use is the ordinary failure — `rec.py` is often still running
+from a rehearsal — and it is reported on the page rather than stopping the
+server. The scoreboard still works from files.
+
+#### Still fine from a terminal
+
 ```bash
 python rec.py --split           # one file per station, which cross-checking needs
 ```
 
-Point WSJT-X at this machine under **Reporting → UDP Server**, port 2237.
-Every time an operator presses Log, the contact arrives as a UDP datagram, is
-decoded, and appended as ADIF — so a live station and a mailed-in file are
-indistinguishable by the time they reach the scoreboard. Several instances can
-report to one server, which is what a multi-operator team wants.
+[`rec.py`](rec.py) does the same job standalone, which is what you want when
+the scoreboard is somewhere else. The trouble with a terminal is that nobody
+can see it: if it dies, or was never started, or is bound to the wrong port,
+the first anybody knows is that the scoreboard stayed at zero. That is why the
+server does it too.
 
-`rec.py` used to write the hex of every packet and nothing else, recording that
-something had happened without recording what. The bytes are still available
-with `--raw` when a datagram needs looking at.
+The raw bytes are available with `--raw` when a datagram needs looking at.
 
 ### From files
 
@@ -382,11 +428,14 @@ radiorumble/
   dxcc.py               callsign -> country, via cty.dat
   cty.py                the cty.dat parser
   wsjtx.py              decodes WSJT-X's UDP datagrams
+  listener.py           the UDP listener the server runs, and who it has heard
   store.py              every contact held, plus the void list
   verify.py             one log checked against another
   ingest.py             watches the logs, reads each byte once
 templates/index.html    scoreboard, US map and globe in one page
 templates/admin.html    the review screen
+templates/listener.html the listener's controls
+templates/check.html    "is it hearing me?", for operators setting up
 static/
   us-states.json        50 states + DC, Natural Earth
   world-land.json       world coastline, Natural Earth
@@ -419,6 +468,10 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/ws` | Websocket; pushes a full snapshot whenever a log grows |
 | `/api/scoreboard` | The same snapshot over HTTP, for anything that would rather poll |
 | `/api/board` | The pieces of the board and where they are. Fetched once by the page |
+| `/check` | “Is it hearing me?” — public, for operators setting up |
+| `/api/stations` | Who the listener has heard from. Public, minus the addresses |
+| `/listener` | Start, stop, and what has been heard |
+| `/api/listener` · `/start` · `/stop` · `/forget` | The same, as JSON. Needs the admin token |
 | `/api/health` | Status, how many contacts are held, how many are voided |
 | `/admin` | The review screen |
 | `/api/contacts` | Every contact with its status. Needs the admin token |

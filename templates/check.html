@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Is it hearing me?</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
+    --text:#e8edf5; --muted:#8b97ad; --dim:#5d6980; --live:#3fd07f; --bad:#ff8080;
+    --warm:#ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 60px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+           padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  h1 { font-size:20px; margin:0; }
+  a.back { margin-left:auto; color:#4da3ff; text-decoration:none; font-size:13px; }
+  a.back:hover { text-decoration:underline; }
+
+  .server { display:flex; align-items:center; gap:10px; padding:12px 16px;
+            border:1px solid var(--line); border-radius:10px; background:var(--panel);
+            margin-bottom:16px; }
+  .dot { width:11px; height:11px; border-radius:50%; flex:0 0 auto; }
+  .dot.up { background:var(--live); box-shadow:0 0 0 4px rgba(63,208,127,.16); }
+  .dot.down { background:var(--bad); box-shadow:0 0 0 4px rgba(255,128,128,.16); }
+  .server b { font-size:15px; }
+  .server .sub { color:var(--muted); font-size:13px; }
+
+  /* The instructions are the other half of the answer: somebody whose rig is
+     not listed needs to know what to change, on the same screen. */
+  .how { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+         padding:14px 16px; margin-bottom:18px; font-size:13.5px; color:var(--muted); }
+  .how b { color:var(--text); }
+  .how code { background:var(--panel-2); padding:1px 6px; border-radius:4px;
+              color:var(--text); font-size:12.5px; }
+  .how ol { margin:8px 0 0; padding-left:20px; }
+  .how li { margin:3px 0; }
+
+  .count { color:var(--muted); font-size:13px; margin:0 0 8px; }
+  .cards { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); }
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          padding:12px 14px; }
+  .card.live { border-color:rgba(63,208,127,.45); }
+  .card.stale { opacity:.62; }
+  .card .top { display:flex; align-items:center; gap:8px; }
+  .call { font-size:17px; font-weight:700; letter-spacing:.3px; }
+  .grid { color:var(--muted); font-size:13px; }
+  .when { margin-left:auto; font-size:12px; color:var(--muted); white-space:nowrap; }
+  .card.live .when { color:var(--live); }
+  .meta { margin-top:6px; font-size:12.5px; color:var(--muted);
+          display:flex; flex-wrap:wrap; gap:4px 12px; }
+  .meta b { color:var(--text); font-weight:600; }
+  .tx { color:var(--warm); font-weight:700; }
+
+  .empty { border:1px dashed var(--line); border-radius:10px; padding:26px 18px;
+           text-align:center; color:var(--muted); }
+  .empty b { display:block; color:var(--text); font-size:16px; margin-bottom:6px; }
+  footer { margin-top:22px; color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Is it hearing me?</h1>
+    <a class="back" href="./">← scoreboard</a>
+  </header>
+
+  <div class="server">
+    <span class="dot down" id="dot"></span>
+    <div>
+      <b id="server-state">checking…</b>
+      <div class="sub" id="server-sub"></div>
+    </div>
+  </div>
+
+  <div class="how">
+    <b>Point WSJT-X here.</b> File → Settings → Reporting → UDP Server.
+    <ol>
+      <li>UDP Server: <code id="host-hint">this machine's address</code></li>
+      <li>UDP Server port: <code id="port-hint">2237</code></li>
+      <li>Tick <b>Accept UDP requests</b> is not needed — only the outgoing report is.</li>
+    </ol>
+    Your callsign appears below within about fifteen seconds of WSJT-X starting,
+    without you working anybody: it announces itself on its own.
+  </div>
+
+  <p class="count" id="count"></p>
+  <div class="cards" id="cards"></div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+(function () {
+  // Relative to wherever this page was loaded from, so a path-prefixing proxy
+  // doesn't break the polling — the same reason the scoreboard does it.
+  var BASE = location.pathname.replace(/\/check\/?$/, "").replace(/\/$/, "");
+  var skew = 0;   // server clock minus ours
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function ago(seconds) {
+    if (seconds < 5) { return "just now"; }
+    if (seconds < 90) { return Math.round(seconds) + "s ago"; }
+    if (seconds < 5400) { return Math.round(seconds / 60) + " min ago"; }
+    return Math.round(seconds / 3600) + " h ago";
+  }
+
+  function render(data) {
+    var up = !!data.running;
+    document.getElementById("dot").className = "dot " + (up ? "up" : "down");
+    document.getElementById("server-state").textContent =
+      up ? "The listener is running" : "The listener is not running";
+    document.getElementById("server-sub").textContent =
+      up ? ("Listening on UDP port " + data.port + " — set that as your UDP Server port.")
+         : "Nothing is being received. Find an organiser.";
+    document.getElementById("port-hint").textContent = data.port;
+    document.getElementById("host-hint").textContent = location.hostname;
+
+    var rows = data.stations || [];
+    var live = rows.filter(function (r) { return r.live; }).length;
+    document.getElementById("count").textContent = rows.length
+      ? (live + " station" + (live === 1 ? "" : "s") + " reporting now · " +
+         rows.length + " heard since the listener started")
+      : "";
+
+    if (!rows.length) {
+      document.getElementById("cards").innerHTML =
+        '<div class="empty"><b>Nobody has reported yet</b>' +
+        "As soon as a copy of WSJT-X is pointed at this server it shows up here, " +
+        "even before it works anybody.</div>";
+      return;
+    }
+
+    document.getElementById("cards").innerHTML = rows.map(function (r) {
+      // The server's clock, not the viewer's: a laptop with the wrong time
+      // would otherwise report everyone as hours stale.
+      var quiet = r.quiet_for + skew;
+      var bits = [];
+      if (r.band) { bits.push("<span><b>" + esc(r.band) + "</b> " + esc(r.mode || "") + "</span>"); }
+      bits.push("<span><b>" + r.windows.hour.qsos + "</b> contacts this hour</span>");
+      if (r.transmitting) { bits.push('<span class="tx">transmitting</span>'); }
+      else if (r.dx_call) { bits.push("<span>working " + esc(r.dx_call) + "</span>"); }
+      return '<div class="card ' + (r.live ? "live" : "stale") + '">' +
+        '<div class="top"><span class="call">' + esc(r.call || r.key) + "</span>" +
+        (r.grid ? '<span class="grid">' + esc(r.grid) + "</span>" : "") +
+        '<span class="when">' + ago(Math.max(0, quiet)) + "</span></div>" +
+        '<div class="meta">' + bits.join("") + "</div></div>";
+    }).join("");
+  }
+
+  function poll() {
+    fetch(BASE + "/api/stations", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.server_time) {
+          skew = (Date.now() - Date.parse(d.server_time)) / 1000;
+        }
+        render(d);
+        document.getElementById("foot").textContent =
+          "Updated " + new Date().toLocaleTimeString() + " · refreshes every 5 seconds";
+      })
+      .catch(function () {
+        document.getElementById("dot").className = "dot down";
+        document.getElementById("server-state").textContent = "Can't reach the server";
+        document.getElementById("server-sub").textContent =
+          "The scoreboard machine may be down, or you may be on a different network.";
+      });
+  }
+
+  poll();
+  setInterval(poll, 5000);
+})();
+</script>
+</body>
+</html>
