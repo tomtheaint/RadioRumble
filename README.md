@@ -362,14 +362,56 @@ the listener page.
 operator has the same question while setting up, and before this the only way
 to answer it was to work somebody and hope.
 
-It shows the callsign, grid, band, whether the station is transmitting, and how
-long ago it was last heard — and it tells somebody who *isn't* listed exactly
-what to change, on the same screen. How soon they appear depends on which box
-they used, per the table above; the page says so rather than leaving an
+Two sections, because there are two questions.
+
+**Roll call** — the teams playing today, one card each, with a dot on the team
+name for whether their radio is reaching us. Under it, every rostered operator
+and the time of their last contact. The state worth having is the third one:
+
+| | |
+|---|---|
+| **live** | heard within the last 90 seconds |
+| **last heard 6 min ago** | they were here and have gone quiet |
+| **not heard yet** | nothing, ever — the row somebody checking in is looking for |
+
+That last one is why the roster drives this section rather than the listener:
+the operator you are hunting for is by definition the one who has never sent
+anything, and no amount of listening produces them. Filterable by team.
+
+**Everyone else** — every station heard that is on nobody's roster, with a
+slider for how far back to look: 5 minutes, 15, an hour, 3 hours, a day, or
+any time. At a real event this is most of the log, and it is not a problem —
+it is the rest of the world.
+
+Both refresh every five seconds. How soon somebody appears depends on which
+box they used, per the table above; the page says so rather than leaving an
 operator on the secondary server wondering why nothing happened.
 
 Addresses are not shown: a callsign is broadcast to the world anyway and an
 address is not.
+
+The same dot appears beside each team on the scoreboard itself, which is what
+somebody running the event looks at first. It is merged onto the payload in
+`app.py` rather than computed in `scoring.py` — whether a school's radio is on
+says nothing about its score, and the scoreboard has no business knowing a UDP
+socket exists.
+
+#### Who is playing today
+
+`[[matches]]` is optional. Leave it out and every team counts as playing, which
+is what a one-off event means:
+
+```toml
+[[matches]]
+date  = 2026-09-12
+teams = ["KU", "KSU"]
+label = "Week 1"
+```
+
+Write it and the roll call shows only the schools actually expected at the
+radio that afternoon — listing forty teams when four are playing is as useless
+as listing none. Use `start`/`end` instead of `date` when a day is not precise
+enough.
 
 #### Controlling it
 

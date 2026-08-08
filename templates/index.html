@@ -146,6 +146,10 @@
   .foot b { color: var(--muted); font-weight: 600; }
   .offline { color: #ff8080; }
   .hidden { display: none !important; }
+  /* A team's radio, not its score. */
+  .onair { display:inline-block; width:7px; height:7px; border-radius:50%;
+           margin-right:6px; background:#3d4a63; vertical-align:middle; }
+  .onair.up { background:#3fd07f; box-shadow:0 0 0 3px rgba(63,208,127,.18); }
 </style>
 </head>
 <body>
@@ -717,7 +721,14 @@
       return '<div class="team' + (i === 0 && t.score > 0 ? " leader" : "") + '">' +
         '<div class="bar" style="background:' + t.color + '"></div>' +
         '<div class="rank">' + t.position + "</div>" +
-        '<div class="who"><div class="abbr">' + esc(t.abbr) +
+        '<div class="who"><div class="abbr">' +
+          // Whether their radio is reaching us. Beside the name because "is
+          // my school on the air" is asked far more than "is KE0VUM".
+          (t.connected === undefined ? "" :
+            '<span class="onair' + (t.connected ? " up" : "") +
+            '" title="' + (t.connected ? "reporting to the server" :
+              "nothing heard from this team") + '"></span>') +
+          esc(t.abbr) +
           (t.grid ? ' <span style="font-weight:400;font-size:11px;color:var(--dim)">' + esc(t.grid) + "</span>" : "") +
           "</div>" +
           '<div class="full">' + sub + "</div>" +

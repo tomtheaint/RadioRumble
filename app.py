@@ -59,6 +59,24 @@ ADMIN_TOKEN = os.environ.get("RR_ADMIN_TOKEN") or secrets.token_urlsafe(16)
 ADMIN_TOKEN_GENERATED = "RR_ADMIN_TOKEN" not in os.environ
 
 
+def _snapshot() -> dict:
+    """The scoreboard, plus which teams the listener can currently hear.
+
+    Merged here rather than in the scoreboard itself: whether a school's radio
+    is on says nothing about its score, and `scoring.py` has no business
+    knowing a UDP socket exists. But a dot beside the team name is the thing
+    somebody running the event looks at first, so it travels with the payload
+    that is already being pushed.
+    """
+    payload = ingest.snapshot()
+    live = {row["call"].upper() for row in listener.stations() if row["live"]}
+    on_air = {team.abbr for team in contest.teams
+              if any(call.upper() in live for call in team.callsigns)}
+    for row in payload.get("standings", []):
+        row["connected"] = row.get("abbr") in on_air
+    return payload
+
+
 def _safe_name(value: str) -> str:
     """A callsign typed by a stranger becomes part of a filename."""
     keep = [c for c in str(value).upper() if c.isalnum() or c in "-_"]
@@ -84,7 +102,7 @@ async def _broadcast() -> None:
     """Push the current scoreboard to everyone still listening."""
     if not clients:
         return
-    payload = json.dumps(ingest.snapshot())
+    payload = json.dumps(_snapshot())
     for ws in tuple(clients):
         try:
             await ws.send_text(payload)
@@ -155,7 +173,7 @@ async def index() -> HTMLResponse:
 @app.get("/api/scoreboard")
 async def scoreboard() -> JSONResponse:
     """The same payload the websocket pushes, for anything that would rather poll."""
-    return JSONResponse(ingest.snapshot())
+    return JSONResponse(_snapshot())
 
 
 @app.get("/api/board")
@@ -197,18 +215,68 @@ async def check_page() -> HTMLResponse:
 
 @app.get("/api/stations")
 async def stations() -> JSONResponse:
-    """Who the listener has heard from. Public, minus the addresses.
+    """Who the listener has heard from, arranged the way the page reads it.
 
-    A callsign and a grid are what an operator is broadcasting to the world
-    anyway; the address they are broadcasting it from is not, so it stays on
-    the admin side.
+    Two questions, and they are different ones. *Are my team checked in?* is
+    answered by a roster: it has to name the operators who have **not** been
+    heard, which nothing the listener knows can do on its own — an operator
+    who never pointed WSJT-X anywhere is exactly the one somebody is looking
+    for. *Who else is out there?* is answered by what was heard.
+
+    Public, minus the addresses: a callsign and a grid are what an operator is
+    broadcasting to the world anyway; the address they broadcast it from is
+    not, so that stays on the admin side.
     """
+    heard = listener.stations(include_address=False)
+    by_call = {row["call"].upper(): row for row in heard if row.get("call")}
+    playing = set(contest.playing())
+
+    rostered = set()
+    teams = []
+    for team in contest.teams:
+        operators = []
+        for call in team.callsigns:
+            rostered.add(call.upper())
+            row = by_call.get(call.upper())
+            operators.append({
+                "call": call.upper(),
+                # The three states an operator can be in, and the middle one is
+                # the one worth having: heard earlier, quiet now.
+                "heard": row is not None,
+                "live": bool(row and row["live"]),
+                "last_seen": row["last_seen"] if row else None,
+                "last_qso": row["last_qso"] if row else None,
+                "quiet_for": row["quiet_for"] if row else None,
+                "band": row["band"] if row else "",
+                "mode": row["mode"] if row else "",
+                "transmitting": bool(row and row["transmitting"]),
+                "qsos": row["qsos"] if row else 0,
+            })
+        teams.append({
+            "abbr": team.abbr,
+            "name": team.name,
+            "color": team.color,
+            "playing": team.abbr in playing,
+            # A team is connected when any one of its stations is: a school
+            # with four operators is on the air if one of them is.
+            "connected": any(o["live"] for o in operators),
+            "heard_ever": any(o["heard"] for o in operators),
+            "live_operators": sum(1 for o in operators if o["live"]),
+            "operators": operators,
+        })
+
     return JSONResponse(
         {
             "running": listener.running,
             "ports": list(listener.bound or listener.ports),
             "server_time": _iso_now(),
-            "stations": listener.stations(include_address=False),
+            "teams": teams,
+            # Everybody else: heard, but on nobody's roster. At a real event
+            # this is most of the log and it is not a problem, it is the rest
+            # of the world.
+            "others": [r for r in heard
+                       if (r.get("call") or "").upper() not in rostered],
+            "stations": heard,
         }
     )
 
@@ -387,7 +455,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     clients.add(websocket)
     try:
-        await websocket.send_text(json.dumps(ingest.snapshot()))
+        await websocket.send_text(json.dumps(_snapshot()))
         while True:
             # The client says nothing; this is here to notice when it leaves.
             # Without a read, a closed browser tab would sit in `clients`

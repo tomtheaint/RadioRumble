@@ -95,6 +95,28 @@ special_calls = []
 
 
 #  ---------------------------------------------------------------------------
+#  The fixture list. Entirely optional.
+#
+#  Leave it out and every team counts as playing today, which is what a
+#  one-off event means. Write it and the roll call on /check shows only the
+#  schools actually expected at the radio that afternoon — listing forty teams
+#  when four are playing is as useless as listing none.
+#
+#    [[matches]]
+#    date  = 2026-09-12          # the day it is played on
+#    teams = ["KU", "KSU"]       # abbreviations, as in [[teams]] below
+#    label = "Week 1"            # shown on the roll call
+#
+#  Use start/end instead of date when a day is not precise enough:
+#
+#    [[matches]]
+#    start = 2026-09-12T18:00:00Z
+#    end   = 2026-09-12T20:00:00Z
+#    teams = ["NEB", "ISU"]
+#  ---------------------------------------------------------------------------
+
+
+#  ---------------------------------------------------------------------------
 #  The WSJT-X listener.
 #
 #  Operators point WSJT-X at this machine under Reporting -> UDP Server, and

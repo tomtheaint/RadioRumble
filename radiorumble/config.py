@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .bonuses import BonusRules
@@ -17,6 +17,37 @@ from .bonuses import BonusRules
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / "contest.toml"
 DEFAULT_GRIDS = BASE_DIR / "grid.txt"
+
+
+@dataclass(frozen=True)
+class Match:
+    """One fixture: who is playing, and when.
+
+    Optional. With no `[[matches]]` at all every team counts as playing today,
+    which is what a one-off event means and what this app was until there was
+    a reason to know otherwise. The moment there is a season, the roll call
+    has to know which schools are actually expected at the radio this
+    afternoon — listing forty teams when four are playing is as useless as
+    listing none.
+    """
+
+    teams: tuple                    # team abbreviations
+    day: object = None              # the date it is played on
+    start: object = None            # a window, when the day is not enough
+    end: object = None
+    label: str = ""
+
+    def on(self, when: datetime) -> bool:
+        """Is this fixture happening at that moment?
+
+        A day is the usual answer: an operator checking in at ten to two cares
+        that their team plays *today*, not that the clock has started.
+        """
+        if self.start and self.end:
+            return self.start <= when <= self.end
+        if self.day is not None:
+            return self.day == when.date()
+        return True                 # a fixture with no date is always on
 
 
 @dataclass(frozen=True)
@@ -71,6 +102,8 @@ class Contest:
     #: The [listener] table, verbatim. The listener reads its own settings so
     #: adding one never means adding a field here.
     listener: dict = field(default_factory=dict)
+    #: The fixture list, if there is one. Empty means everybody plays today.
+    matches: tuple = ()
     #: "team" pits schools against each other; "operator" splits every
     #: rostered callsign into its own entry, for a club's internal contest or
     #: an event open to all comers.
@@ -98,6 +131,17 @@ class Contest:
             from .bonuses import BonusRules
 
             self.bonuses = BonusRules()
+
+    def playing(self, when: datetime | None = None) -> tuple:
+        """Which teams are expected at the radio. All of them when no fixture
+        list has been written, which is what a single event means."""
+        if not self.matches:
+            return tuple(t.abbr for t in self.teams)
+        moment = when or datetime.now(timezone.utc)
+        due = {abbr.upper() for m in self.matches if m.on(moment) for abbr in m.teams}
+        # Ordered as the teams are, not as the fixtures are, so the roll call
+        # reads the same way the scoreboard does.
+        return tuple(t.abbr for t in self.teams if t.abbr.upper() in due)
 
     def team_for(self, callsign: str) -> Team | None:
         """Which team a logging station belongs to, or None if unrostered.
@@ -225,6 +269,47 @@ def split_into_operators(teams: tuple[Team, ...]) -> tuple[Team, ...]:
     return tuple(out)
 
 
+def _as_datetime(value):
+    """tomllib hands back a date, a datetime, or a string. Any of them is a
+    reasonable thing for somebody to have typed."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _load_matches(raw) -> tuple:
+    if not isinstance(raw, list):
+        return ()
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        teams = tuple(str(t).upper() for t in entry.get("teams", []) if str(t).strip())
+        if not teams:
+            continue
+        day = entry.get("date")
+        if isinstance(day, datetime):
+            day = day.date()
+        elif isinstance(day, str):
+            moment = _as_datetime(day)
+            day = moment.date() if moment else None
+        elif not isinstance(day, date):
+            day = None
+        out.append(Match(teams=teams, day=day,
+                         start=_as_datetime(entry.get("start")),
+                         end=_as_datetime(entry.get("end")),
+                         label=str(entry.get("label", ""))))
+    return tuple(out)
+
+
 def load(path: Path = DEFAULT_CONFIG) -> Contest:
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
@@ -281,6 +366,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Contest:
         mode_settings=mode_settings,
         log_dir=log_dir or None,
         listener=data.get("listener", {}) if isinstance(data.get("listener"), dict) else {},
+        matches=_load_matches(data.get("matches")),
         compete_as=compete_as,
         match_minutes=int(contest.get("match_minutes", 3)),
         bonuses=BonusRules.from_config(data.get("bonuses")),

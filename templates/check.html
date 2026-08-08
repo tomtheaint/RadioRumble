@@ -55,6 +55,41 @@
   .meta b { color:var(--text); font-weight:600; }
   .tx { color:var(--warm); font-weight:700; }
 
+  h2 { font-size:15px; margin:26px 0 4px; display:flex; align-items:center; gap:10px; }
+  h2 .sub2 { font-weight:400; font-size:12.5px; color:var(--muted); }
+  .filters { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
+  .pill { border:1px solid var(--line); background:var(--panel); color:var(--muted);
+          border-radius:999px; padding:3px 11px; font-size:12px; cursor:pointer; }
+  .pill.on { color:var(--text); border-color:currentColor; }
+  .pill i { display:inline-block; width:8px; height:8px; border-radius:50%;
+            margin-right:6px; background:var(--dim); vertical-align:middle; }
+  .pill i.up { background:var(--live); }
+
+  /* One card per team. The connection dot is on the team name because that is
+     what somebody is looking for — "is my school on the air" is asked far more
+     often than "is KE0VUM on the air". */
+  .team { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          margin-bottom:10px; overflow:hidden; }
+  .team.off { opacity:.72; }
+  .team-head { display:flex; align-items:center; gap:9px; padding:10px 14px;
+               border-left:4px solid var(--line); }
+  .team-name { font-weight:700; font-size:15px; }
+  .team-note { margin-left:auto; font-size:12px; color:var(--muted); }
+  .ops { display:grid; gap:1px; background:var(--line); }
+  .op { display:flex; align-items:center; gap:9px; padding:7px 14px;
+        background:var(--panel-2); font-size:13px; }
+  .op .c { font-weight:700; letter-spacing:.3px; min-width:76px; }
+  .op .d { color:var(--muted); font-size:12.5px; }
+  .op .r { margin-left:auto; font-size:12px; color:var(--muted); white-space:nowrap; }
+  .op.is-live .r { color:var(--live); }
+  .op.never { opacity:.55; }
+  .op.never .r { color:var(--bad); }
+
+  .range { display:flex; align-items:center; gap:10px; margin:6px 0 12px;
+           font-size:12.5px; color:var(--muted); }
+  .range input[type=range] { flex:1; max-width:280px; accent-color:#4da3ff; }
+  .range b { color:var(--text); }
+
   .empty { border:1px dashed var(--line); border-radius:10px; padding:26px 18px;
            text-align:center; color:var(--muted); }
   .empty b { display:block; color:var(--text); font-size:16px; margin-bottom:6px; }
@@ -101,7 +136,17 @@
     page.
   </div>
 
-  <p class="count" id="count"></p>
+  <h2 id="roll-title">Roll call</h2>
+  <p class="count" id="roll-note"></p>
+  <div class="filters" id="team-filters"></div>
+  <div id="roll"></div>
+
+  <h2>Everyone else <span class="sub2" id="others-note"></span></h2>
+  <div class="range">
+    <label for="range">Heard in the last</label>
+    <input type="range" id="range" min="0" max="5" step="1" value="3" />
+    <b id="range-label"></b>
+  </div>
   <div class="cards" id="cards"></div>
 
   <footer id="foot"></footer>
@@ -127,7 +172,34 @@
     return Math.round(seconds / 3600) + " h ago";
   }
 
-  function render(data) {
+  // The slider positions, coarsest last. "Any" is kept because before the
+  // contest starts it is the only useful setting.
+  var RANGES = [
+    { secs: 300, label: "5 minutes" },
+    { secs: 900, label: "15 minutes" },
+    { secs: 3600, label: "hour" },
+    { secs: 10800, label: "3 hours" },
+    { secs: 86400, label: "day" },
+    { secs: 0, label: "any time" }
+  ];
+  var rangeIndex = 3;
+  var teamFilter = "";      // "" is every team
+  var latest = null;
+
+  var slider = document.getElementById("range");
+  slider.value = rangeIndex;
+  slider.addEventListener("input", function () {
+    rangeIndex = parseInt(slider.value, 10);
+    if (latest) { render(latest); }
+  });
+
+  function ageOf(row) {
+    // The server's clock, not the viewer's: a laptop with the wrong time would
+    // otherwise report everyone as hours stale.
+    return Math.max(0, row.quiet_for + skew);
+  }
+
+  function renderServer(data) {
     var up = !!data.running;
     document.getElementById("dot").className = "dot " + (up ? "up" : "down");
     document.getElementById("server-state").textContent =
@@ -139,26 +211,103 @@
     document.getElementById("port-hint").textContent = ports[0] || 2237;
     document.getElementById("port2-hint").textContent = ports[1] || 2333;
     document.getElementById("host-hint").textContent = location.hostname;
+  }
 
-    var rows = data.stations || [];
-    var live = rows.filter(function (r) { return r.live; }).length;
-    document.getElementById("count").textContent = rows.length
-      ? (live + " station" + (live === 1 ? "" : "s") + " reporting now · " +
-         rows.length + " heard since the listener started")
+  function renderFilters(teams) {
+    var host = document.getElementById("team-filters");
+    if (teams.length < 2) { host.innerHTML = ""; return; }
+    var bits = ['<button class="pill ' + (teamFilter ? "" : "on") +
+                '" data-team="">All teams</button>'];
+    teams.forEach(function (t) {
+      bits.push('<button class="pill ' + (teamFilter === t.abbr ? "on" : "") +
+        '" data-team="' + esc(t.abbr) + '" style="' +
+        (teamFilter === t.abbr ? "color:" + t.color + ";border-color:" + t.color : "") +
+        '"><i class="' + (t.connected ? "up" : "") + '"></i>' + esc(t.abbr) + "</button>");
+    });
+    host.innerHTML = bits.join("");
+    Array.prototype.forEach.call(host.querySelectorAll(".pill"), function (b) {
+      b.onclick = function () {
+        teamFilter = b.dataset.team;
+        if (latest) { render(latest); }
+      };
+    });
+  }
+
+  function renderRoll(data) {
+    var playing = (data.teams || []).filter(function (t) { return t.playing; });
+    renderFilters(playing);
+
+    var shown = playing.filter(function (t) {
+      return !teamFilter || t.abbr === teamFilter;
+    });
+    var connected = playing.filter(function (t) { return t.connected; }).length;
+    document.getElementById("roll-note").textContent = playing.length
+      ? (connected + " of " + playing.length + " team" +
+         (playing.length === 1 ? "" : "s") + " on the air")
       : "";
+
+    if (!shown.length) {
+      document.getElementById("roll").innerHTML =
+        '<div class="empty">No teams are scheduled today.</div>';
+      return;
+    }
+
+    document.getElementById("roll").innerHTML = shown.map(function (t) {
+      var ops = t.operators.map(function (o) {
+        var state, cls;
+        if (o.live) {
+          state = "heard " + ago(ageOf(o));
+          cls = "is-live";
+        } else if (o.heard) {
+          // The state worth having: they were here, and they have gone quiet.
+          state = "last heard " + ago(ageOf(o));
+          cls = "";
+        } else {
+          state = "not heard yet";
+          cls = "never";
+        }
+        var detail = [];
+        if (o.band) { detail.push(esc(o.band) + " " + esc(o.mode || "")); }
+        // The thing they came to check: did my last contact get through?
+        if (o.last_qso) {
+          detail.push("last contact " + esc(o.last_qso.slice(11, 16)) + "Z");
+        } else if (o.heard) {
+          detail.push("no contacts yet");
+        }
+        if (o.transmitting) { detail.push('<span class="tx">transmitting</span>'); }
+        return '<div class="op ' + cls + '"><span class="c">' + esc(o.call) +
+          '</span><span class="d">' + detail.join(" · ") +
+          '</span><span class="r">' + state + "</span></div>";
+      }).join("");
+
+      return '<div class="team ' + (t.connected ? "" : "off") + '">' +
+        '<div class="team-head" style="border-left-color:' + t.color + '">' +
+        '<span class="dot ' + (t.connected ? "up" : "down") + '"></span>' +
+        '<span class="team-name">' + esc(t.name) + "</span>" +
+        '<span class="team-note">' + t.live_operators + " of " +
+        t.operators.length + " on the air</span></div>" +
+        '<div class="ops">' + ops + "</div></div>";
+    }).join("");
+  }
+
+  function renderOthers(data) {
+    var limit = RANGES[rangeIndex];
+    document.getElementById("range-label").textContent = limit.label;
+
+    var rows = (data.others || []).filter(function (r) {
+      return !limit.secs || ageOf(r) <= limit.secs;
+    });
+    document.getElementById("others-note").textContent =
+      rows.length + " station" + (rows.length === 1 ? "" : "s") +
+      " not on any roster";
 
     if (!rows.length) {
       document.getElementById("cards").innerHTML =
-        '<div class="empty"><b>Nobody has reported yet</b>' +
-        "As soon as a copy of WSJT-X is pointed at this server it shows up here, " +
-        "even before it works anybody.</div>";
+        '<div class="empty">Nobody else heard in the last ' + limit.label + ".</div>";
       return;
     }
 
     document.getElementById("cards").innerHTML = rows.map(function (r) {
-      // The server's clock, not the viewer's: a laptop with the wrong time
-      // would otherwise report everyone as hours stale.
-      var quiet = r.quiet_for + skew;
       var bits = [];
       if (r.band) { bits.push("<span><b>" + esc(r.band) + "</b> " + esc(r.mode || "") + "</span>"); }
       bits.push("<span><b>" + r.windows.hour.qsos + "</b> contacts this hour</span>");
@@ -167,9 +316,16 @@
       return '<div class="card ' + (r.live ? "live" : "stale") + '">' +
         '<div class="top"><span class="call">' + esc(r.call || r.key) + "</span>" +
         (r.grid ? '<span class="grid">' + esc(r.grid) + "</span>" : "") +
-        '<span class="when">' + ago(Math.max(0, quiet)) + "</span></div>" +
+        '<span class="when">' + ago(ageOf(r)) + "</span></div>" +
         '<div class="meta">' + bits.join("") + "</div></div>";
     }).join("");
+  }
+
+  function render(data) {
+    latest = data;
+    renderServer(data);
+    renderRoll(data);
+    renderOthers(data);
   }
 
   function poll() {
