@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.DS_Store
+tests/
+logs/
+mock_contest_log.txt
+notes.txt
+requirements-dev.txt

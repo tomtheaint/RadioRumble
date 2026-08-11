@@ -20,12 +20,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY --from=builder /opt/venv /opt/venv
 
-WORKDIR /app
-COPY . .
+RUN useradd -u 1000 appuser && mkdir -p /data && chown appuser:appuser /data
 
-RUN useradd -r -u 1000 appuser \
-    && mkdir -p /app/logs /data \
-    && chown -R appuser:appuser /app /data
+WORKDIR /app
+COPY --chown=appuser:appuser . .
+
 USER appuser
 
 EXPOSE 7373
