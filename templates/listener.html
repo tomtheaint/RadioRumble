@@ -70,6 +70,7 @@
 <div class="wrap">
   <header>
     <h1>WSJT-X listener</h1>
+    <a class="back" href="./admin">log review</a>
     <a class="back" href="./check">public check page</a>
     <span class="spacer"></span>
     <input type="password" id="token" placeholder="admin token" autocomplete="off" />
@@ -109,7 +110,37 @@
   var skew = 0;
 
   var tokenBox = document.getElementById("token");
-  tokenBox.value = sessionStorage.getItem("rr-admin") || "";
+
+  /* A token in the address bar, as on the review screen. The fragment form
+     (#token=...) never leaves the browser, so it stays out of the server's
+     access log; it is wiped from the address bar as soon as it is read. */
+  function tokenFromUrl() {
+    var found = "";
+    [location.hash.slice(1), location.search.slice(1)].forEach(function (part) {
+      if (found || !part) { return; }
+      part.split("&").forEach(function (pair) {
+        var eq = pair.indexOf("=");
+        var key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+        if (!found && (key === "token" || key === "t")) {
+          found = decodeURIComponent((eq < 0 ? "" : pair.slice(eq + 1)).replace(/\+/g, " "));
+        }
+      });
+    });
+    return found.trim();
+  }
+
+  function useUrlToken() {
+    var found = tokenFromUrl();
+    if (!found) { return false; }
+    tokenBox.value = found;
+    try { sessionStorage.setItem("rr-admin", found); } catch (e) { /* private mode */ }
+    history.replaceState(null, "", location.pathname);
+    return true;
+  }
+
+  if (!useUrlToken()) { tokenBox.value = sessionStorage.getItem("rr-admin") || ""; }
+  window.addEventListener("hashchange", useUrlToken);
+
   tokenBox.addEventListener("change", function () {
     sessionStorage.setItem("rr-admin", tokenBox.value);
     poll();

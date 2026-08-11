@@ -328,6 +328,18 @@ Band has to agree between the two logs. Time is allowed to drift by
 `match_minutes` (3 by default) — clocks are not synchronised, and the two ends
 record different moments of an exchange that takes about a minute.
 
+### The two admin screens
+
+There are two, and they are one click apart:
+
+| | |
+| --- | --- |
+| **[`/listener`](http://localhost:7373/listener)** | Start and stop the WSJT-X listener, and see what it has heard |
+| **[`/admin`](http://localhost:7373/admin)** | Review the log: every contact, its status, and voiding |
+
+Both take the same admin token, and a tab that has signed in to one is signed
+in to the other — so `#token=` on either link opens the whole operator side.
+
 ### The review screen
 
 `/admin` lists every contact with its status, filterable by entrant and by
@@ -344,6 +356,21 @@ RR_ADMIN_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))') \
 If you don't set one, a token is generated per run and written to the server
 log at startup — so the endpoints are never accidentally open, but you also
 can't forget to set it and quietly end up with no protection.
+
+You can also hand the token to either admin page in the address bar, which
+saves typing it on a laptop across the room:
+
+```
+http://<host>:7373/admin#token=YOUR_TOKEN
+http://<host>:7373/listener#token=YOUR_TOKEN
+```
+
+Put it in the **fragment** (`#token=`) rather than the query string: a fragment
+never leaves the browser, so the token stays out of the server's access log and
+out of any proxy in between. `?token=` is accepted too, for when something has
+mangled the `#`. Either way the page strips it from the address bar as soon as
+it reads it — it still lands in that browser's history, so a shared machine
+wants the box instead.
 
 Generate a set of per-entrant logs to try this with:
 

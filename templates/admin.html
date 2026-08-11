@@ -58,6 +58,7 @@
 <div class="wrap">
   <header>
     <h1>Log review</h1>
+    <a class="back" href="./listener">listener controls</a>
     <a class="back" href="./">&larr; back to the scoreboard</a>
   </header>
 
@@ -72,6 +73,9 @@
     <div class="msg" id="auth-msg">
       Set <b>RR_ADMIN_TOKEN</b> before starting the server to choose this yourself.
       If you didn't, one was generated and written to the server's log at startup.
+      You can also open this page as <b>/admin#token=&hellip;</b> to sign in on
+      arrival — it is cleared from the address bar immediately, though it stays
+      in that browser's history.
     </div>
   </div>
 
@@ -130,7 +134,10 @@
 (function () {
   "use strict";
   var BASE = location.pathname.replace(/\/admin\/?$/, "").replace(/\/+$/, "");
-  var token = "";
+  /* Same key the listener page uses: these are two views of one job, and being
+     asked for the token again on the way between them is friction with no
+     security value -- the tab already holds it either way. */
+  var token = sessionStorage.getItem("rr-admin") || "";
 
   function api(path, opts) {
     opts = opts || {};
@@ -180,17 +187,73 @@
     });
   }
 
-  document.getElementById("signin").addEventListener("click", function () {
-    token = document.getElementById("token").value.trim();
+  function signIn() {
     var msg = document.getElementById("auth-msg");
-    load().then(function () {
+    return load().then(function () {
       document.getElementById("panel").classList.remove("hidden");
       document.getElementById("auth").classList.add("hidden");
     }).catch(function (e) {
       msg.textContent = e.message;
       msg.className = "msg err";
+      document.getElementById("panel").classList.add("hidden");
+      document.getElementById("auth").classList.remove("hidden");
     });
+  }
+
+  function remember(value) {
+    token = value;
+    try { sessionStorage.setItem("rr-admin", value); } catch (e) { /* private mode */ }
+  }
+
+  document.getElementById("signin").addEventListener("click", function () {
+    remember(document.getElementById("token").value.trim());
+    signIn();
   });
+
+  /* A token in the address bar, so a bookmark opens the review screen ready to
+     use -- handy when the operator is on another machine across the room.
+
+     It goes in the fragment (#token=...) rather than the query string on
+     purpose: a fragment never leaves the browser, so the token stays out of
+     uvicorn's access log and out of any proxy in between. It is stripped from
+     the address bar as soon as it is read, so it does not linger on screen or
+     get copied out of the URL by someone reading over a shoulder -- but it is
+     still in the browser's history for that entry, which is why the page says
+     so rather than pretending otherwise. */
+  function tokenFromUrl() {
+    var found = "";
+    [location.hash.slice(1), location.search.slice(1)].forEach(function (part) {
+      if (found || !part) { return; }
+      part.split("&").forEach(function (pair) {
+        var eq = pair.indexOf("=");
+        var key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+        if (!found && (key === "token" || key === "t")) {
+          found = decodeURIComponent((eq < 0 ? "" : pair.slice(eq + 1)).replace(/\+/g, " "));
+        }
+      });
+    });
+    return found.trim();
+  }
+
+  function useUrlToken() {
+    var found = tokenFromUrl();
+    if (!found) { return false; }
+    remember(found);
+    document.getElementById("token").value = found;
+    history.replaceState(null, "", location.pathname);
+    signIn();
+    return true;
+  }
+
+  // A token from the URL wins; otherwise try the one this tab already has, so
+  // arriving from the listener page opens the log without asking again.
+  if (!useUrlToken() && token) {
+    document.getElementById("token").value = token;
+    signIn();
+  }
+  // Adding the fragment to an already-open page does not reload it, so pick up
+  // a token typed into the address bar of a page that is already sitting here.
+  window.addEventListener("hashchange", useUrlToken);
   document.getElementById("token").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { document.getElementById("signin").click(); }
   });
