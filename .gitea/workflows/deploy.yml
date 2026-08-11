@@ -1,0 +1,41 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: git.lab.theislan.com
+  IMAGE: git.lab.theislan.com/tom/radiorumble
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Clone repository
+        run: |
+          rm -rf src
+          git clone --depth 1 --branch "$GITHUB_REF_NAME" \
+            "https://${{ secrets.REGISTRY_USER }}:${{ secrets.REGISTRY_TOKEN }}@${{ env.REGISTRY }}/tom/RadioRumble.git" src
+          cd src && git rev-parse --short HEAD > /tmp/sha
+
+      - name: Log in to registry
+        run: |
+          echo "${{ secrets.REGISTRY_TOKEN }}" \
+            | docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USER }} --password-stdin
+
+      - name: Build and push
+        run: |
+          SHA=$(cat /tmp/sha)
+          cd src
+          docker build -t ${{ env.IMAGE }}:$SHA -t ${{ env.IMAGE }}:latest .
+          docker push ${{ env.IMAGE }}:$SHA
+          docker push ${{ env.IMAGE }}:latest
+
+      - name: Deploy
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+            deploy@10.20.20.60 radiorumble
