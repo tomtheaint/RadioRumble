@@ -241,12 +241,12 @@
     // A free-for-all has no roster, so the section is a list of who has turned
     // up rather than a check against who was expected. Saying "3 of 5 teams on
     // the air" would be inventing a denominator.
-    var fixture = (data.fixtures || []).filter(function (f) { return f.label; })
+    var match = (data.matches || []).filter(function (f) { return f.label; })
       .map(function (f) { return f.label; }).join(" · ");
     document.getElementById("roll-title").firstChild.nodeValue =
       open ? "Checked in " : "Roll call ";
     document.getElementById("roll-title").querySelector(".sub2") &&
-      (document.getElementById("roll-title").querySelector(".sub2").textContent = fixture);
+      (document.getElementById("roll-title").querySelector(".sub2").textContent = match);
 
     var shown = playing.filter(function (t) {
       return !teamFilter || t.abbr === teamFilter;

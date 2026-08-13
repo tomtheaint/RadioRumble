@@ -21,7 +21,7 @@ from fastapi import (Body, Cookie, Depends, FastAPI, File, Form, HTTPException,
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from radiorumble import auth, config, fixtures
+from radiorumble import auth, config, matches
 from radiorumble.db import Database
 from radiorumble.ingest import ContestIngest
 from radiorumble.listener import WsjtxListener
@@ -35,11 +35,11 @@ ADMIN_TEMPLATE = BASE_DIR / "templates" / "admin.html"
 
 contest = config.load()
 
-#  The fixture list and the admin password, in the data directory rather than
+#  The schedule and the admin password, in the data directory rather than
 #  beside the code -- in a container the code is the image, and anything
 #  written next to it goes away on the next deploy.
 db = Database(config.DATA_DIR / "radiorumble.db")
-fixtures.apply(contest, db)
+matches.apply(contest, db)
 
 ingest = ContestIngest(contest)
 
@@ -56,13 +56,13 @@ listener = WsjtxListener(
     fallback=contest.log_file,
 )
 
-# Voiding a contact changes somebody's score, and the fixture list decides who
+# Voiding a contact changes somebody's score, and the schedule decides who
 # is expected at the radio, so neither is something a spectator gets to do.
 #
 # This used to be one shared token, generated at boot if RR_ADMIN_TOKEN was
 # unset. That suited an app whose admin page only struck out contacts during a
 # two-hour event -- nothing to set up, nothing left behind. It stopped suiting
-# one that owns a fixture list: a generated token changes on every restart, and
+# one that owns a schedule: a generated token changes on every restart, and
 # a fixed one is a secret in the environment of every shell that starts the
 # server. A password chosen once on first launch is less to ask.
 #
@@ -158,7 +158,7 @@ async def lifespan(app: FastAPI):
     )
     if auth.needs_setup(db):
         log.info("no admin password set yet -- open /admin to choose one")
-    log.info("%d fixture(s): %d from contest.toml, %d added from the admin page",
+    log.info("%d match(es): %d from contest.toml, %d added from the admin page",
              len(contest.matches), len(getattr(contest, "file_matches", ())),
              len(contest.matches) - len(getattr(contest, "file_matches", ())))
 
@@ -255,9 +255,9 @@ async def stations() -> JSONResponse:
     # cannot ask "who is missing" — only "who has turned up". The page needs
     # to know which of those two it is showing.
     wide_open = contest.open_now()
-    live_fixtures = [
+    live_matches = [
         {"label": m.label, "open": m.is_open, "teams": list(m.teams)}
-        for m in contest.fixtures()
+        for m in contest.happening()
     ]
 
     rostered = set()
@@ -307,7 +307,7 @@ async def stations() -> JSONResponse:
             "server_time": _iso_now(),
             "compete_as": contest.compete_as,
             "open": wide_open,
-            "fixtures": live_fixtures,
+            "matches": live_matches,
             "teams": teams,
             # Everybody else: heard, but on nobody's roster. At a real event
             # this is most of the log and it is not a problem, it is the rest
@@ -557,19 +557,26 @@ async def auth_logout() -> JSONResponse:
     return response
 
 
-# ------------------------------------------------------------- the fixtures
+# -------------------------------------------------------------- the matches
 
 MATCHES_TEMPLATE = BASE_DIR / "templates" / "matches.html"
 
 
 @app.get("/matches", response_class=HTMLResponse)
 async def matches_page() -> HTMLResponse:
-    """The fixture list. Readable by anyone; only an official may change it."""
+    """The schedule. Readable by anyone; only an official may change it."""
     return HTMLResponse(MATCHES_TEMPLATE.read_text(encoding="utf-8"))
 
 
-def _fixture_ids() -> dict:
-    """Map each stored fixture back to its row id.
+def _mode_choices() -> list:
+    """Every game this build can score, with the name it goes by."""
+    from radiorumble.modes import MODES
+
+    return [{"key": key, "label": cls.label} for key, cls in sorted(MODES.items())]
+
+
+def _match_ids() -> dict:
+    """Map each stored match back to its row id.
 
     The contest holds `Match` objects with no idea where they came from, which
     is right -- the scoring rules should not care. But the page needs to know
@@ -578,7 +585,7 @@ def _fixture_ids() -> dict:
     """
     out = {}
     for row in db.all_matches():
-        out[fixtures.match_from_row(row)] = row["id"]
+        out[matches.match_from_row(row)] = row["id"]
     return out
 
 
@@ -586,18 +593,24 @@ def _fixture_ids() -> dict:
 async def list_matches() -> JSONResponse:
     """Now, next, and already played."""
     now = datetime.now(timezone.utc)
-    ids = _fixture_ids()
+    ids = _match_ids()
 
     def described(items):
-        return [fixtures.describe(m, ids.get(m)) for m in items]
+        return [matches.describe(m, ids.get(m)) for m in items]
 
     return JSONResponse({
-        "now": described(contest.fixtures(now)),
+        "now": described(contest.happening(now)),
         "upcoming": described(contest.upcoming(now)),
         "past": described(contest.past(now, limit=20)),
         "playing": list(contest.playing(now)),
         "open_now": contest.open_now(now),
         "teams": [{"abbr": t.abbr, "name": t.name} for t in contest.teams],
+        # The games available, so the page can offer them rather than making
+        # somebody read modes.py. Two of the six were not even named in
+        # contest.toml's own list of them.
+        "modes": _mode_choices(),
+        "default_mode": contest.mode,
+        "mode_now": contest.mode_now(now),
         "server_time": now.isoformat(),
         # Nothing at all is a state the page should say out loud rather than
         # render as an empty list, because it is the normal state of a fresh
@@ -608,10 +621,10 @@ async def list_matches() -> JSONResponse:
 
 @app.post("/api/matches", dependencies=[Depends(require_admin)])
 async def create_match(payload: dict = Body(...)) -> JSONResponse:
-    """Add a fixture.
+    """Add a match.
 
-    A date or a start/end window, never neither: a fixture with no date is
-    permanently on, which silences every other fixture in the list and is
+    A date or a start/end window, never neither: a match with no date is
+    permanently on, which silences every other match in the list and is
     almost certainly a typo rather than an intention. The TOML loader allows it
     because a hand-written file is a considered act; a form submission is not.
     """
@@ -619,17 +632,24 @@ async def create_match(payload: dict = Body(...)) -> JSONResponse:
     teams = [str(t).strip().upper() for t in payload.get("teams", []) if str(t).strip()]
     wide = bool(payload.get("open")) or not teams
 
-    day = fixtures._parse_date(payload.get("day"))
-    start = fixtures._parse_datetime(payload.get("start"))
-    end = fixtures._parse_datetime(payload.get("end"))
+    day = matches._parse_date(payload.get("day"))
+    start = matches._parse_datetime(payload.get("start"))
+    end = matches._parse_datetime(payload.get("end"))
 
     if not day and not (start and end):
         raise HTTPException(
             status_code=400,
-            detail="Give a date, or both a start and an end. A fixture with no "
+            detail="Give a date, or both a start and an end. A match with no "
                    "date is always on, which would hide every other one.")
     if start and end and end <= start:
         raise HTTPException(status_code=400, detail="The end has to be after the start.")
+
+    from radiorumble.modes import MODES
+    mode = (payload.get("mode") or "").strip().lower() or None
+    if mode and mode not in MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No game called {mode!r}. Choose one of: " + ", ".join(sorted(MODES)))
 
     known = {t.abbr.upper() for t in contest.teams}
     unknown = [t for t in teams if t not in known]
@@ -640,27 +660,27 @@ async def create_match(payload: dict = Body(...)) -> JSONResponse:
                    f"contest.toml; add a [[teams]] block there first.")
 
     match_id = db.add_match(label=label, teams=teams, day=day,
-                            start=start, end=end, is_open=wide)
-    fixtures.apply(contest, db)
-    log.info("fixture %d added: %s", match_id, label or (", ".join(teams) or "open night"))
+                            start=start, end=end, is_open=wide, mode=mode)
+    matches.apply(contest, db)
+    log.info("match %d added: %s", match_id, label or (", ".join(teams) or "open night"))
     return JSONResponse({"id": match_id}, status_code=201)
 
 
 @app.delete("/api/matches/{match_id}", dependencies=[Depends(require_admin)])
 async def remove_match(match_id: int) -> JSONResponse:
-    """Delete a stored fixture.
+    """Delete a stored match.
 
-    Only ones this app wrote. A fixture from contest.toml has no id to address
+    Only ones this app wrote. A match from contest.toml has no id to address
     and is not the app's to remove -- saying where it lives is more use than a
     404 would be.
     """
     if not db.delete_match(match_id):
         raise HTTPException(
             status_code=404,
-            detail="No stored fixture with that id. Fixtures written in "
+            detail="No stored match with that id. Matches written in "
                    "contest.toml are edited there, not here.")
-    fixtures.apply(contest, db)
-    log.info("fixture %d deleted", match_id)
+    matches.apply(contest, db)
+    log.info("match %d deleted", match_id)
     return JSONResponse({"ok": True})
 
 

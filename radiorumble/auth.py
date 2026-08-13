@@ -4,7 +4,7 @@ What this replaces: one shared token, either set in ``RR_ADMIN_TOKEN`` or
 generated at boot and printed to the log, sent as an ``X-Admin-Token`` header
 and kept in ``sessionStorage``. That was the right weight for a two-hour event
 with nothing to leave behind. It stopped being the right weight once the admin
-page could change the fixture list, because a generated token means a value
+page could change the schedule, because a generated token means a value
 that changes every restart, and a fixed one means a secret in the environment
 of every shell that starts the server.
 

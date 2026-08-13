@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Radio Rumble — Fixtures</title>
+<title>Radio Rumble — Matches</title>
 <style>
   :root {
     --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
@@ -39,6 +39,7 @@
           color:var(--muted); }
   .pill.live { border-color:var(--live); color:var(--live); }
   .pill.open { border-color:var(--warm); color:var(--warm); }
+  .pill.game { border-color:#3b6ea5; color:#7fb3e8; }
 
   .empty { border:1px dashed var(--line); border-radius:10px; padding:16px;
            color:var(--muted); font-size:13.5px; background:var(--panel); }
@@ -73,7 +74,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Fixtures</h1>
+    <h1>Matches</h1>
     <a class="back first" href="./">← scoreboard</a>
     <a class="back" href="./check">check page</a>
     <a class="back" href="./admin">log review</a>
@@ -92,6 +93,8 @@
 "use strict";
 
 var TEAMS = [];
+var MODES = [];
+var DEFAULT_MODE = "";
 
 function el(tag, cls, text) {
   var n = document.createElement(tag);
@@ -100,9 +103,9 @@ function el(tag, cls, text) {
   return n;
 }
 
-/* A fixture's own words for when it happens. A day-only fixture says the day
-   and nothing else -- inventing a time it does not carry would be a lie the
-   page told, not a fact the fixture has. */
+/* A match's own words for when it happens. A day-only match says the day and
+   nothing else -- inventing a time it does not carry would be a lie the page
+   told, not a fact the match has. */
 function whenText(f) {
   if (f.start && f.end) {
     var s = new Date(f.start), e = new Date(f.end);
@@ -118,12 +121,19 @@ function whenText(f) {
   return "any time";
 }
 
+function labelFor(key) {
+  for (var i = 0; i < MODES.length; i++) {
+    if (MODES[i].key === key) return MODES[i].label;
+  }
+  return key;
+}
+
 function whoText(f) {
   if (f.open) return "Open — anybody who turns up";
   return f.teams.join("  v  ");
 }
 
-function fixtureRow(f, kind) {
+function matchRow(f, kind) {
   var row = el("div", "fix" + (kind === "live" ? " live" : kind === "done" ? " done" : ""));
   row.append(el("div", "when", whenText(f)));
 
@@ -138,12 +148,21 @@ function fixtureRow(f, kind) {
   if (kind === "live") row.append(el("span", "pill live", "on now"));
   if (f.open && kind !== "live") row.append(el("span", "pill open", "open"));
 
-  /* Only fixtures this app stored can be removed from it. One written into
+  /* The game this one is played as. Only shown when the match names its own:
+     repeating the contest default on every row would be noise, and would also
+     imply the match had chosen it when it had not. */
+  if (f.mode) {
+    var m = el("span", "pill game", labelFor(f.mode));
+    m.title = "Played as " + labelFor(f.mode);
+    row.append(m);
+  }
+
+  /* Only matches this app stored can be removed from it. One written into
      contest.toml says so instead, because a delete button that cannot work is
      a worse answer than an explanation. */
   if (f.editable) {
     var del = el("button", "danger", "remove");
-    del.onclick = function () { removeFixture(f.id, row); };
+    del.onclick = function () { removeMatch(f.id, row); };
     row.append(del);
   } else {
     var tag = el("span", "pill", "contest.toml");
@@ -163,10 +182,10 @@ function section(host, title, items, kind, emptyHtml) {
     host.append(e);
     return;
   }
-  items.forEach(function (f) { host.append(fixtureRow(f, kind)); });
+  items.forEach(function (f) { host.append(matchRow(f, kind)); });
 }
 
-function removeFixture(id, row) {
+function removeMatch(id, row) {
   fetch("./api/matches/" + id, { method: "DELETE" })
     .then(function (r) {
       if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.status); });
@@ -181,12 +200,14 @@ function load() {
     .then(function (r) { return r.json(); })
     .then(function (data) {
       TEAMS = data.teams || [];
+      MODES = data.modes || [];
+      DEFAULT_MODE = data.default_mode || "";
 
       section(document.getElementById("live"), "On now", data.now, "live",
         data.any
           ? "Nothing is scheduled for right now."
-          : "<b>No fixture list.</b> Every team counts as playing, which is what a " +
-            "one-off event means. Add a fixture below and the roll call on the " +
+          : "<b>No matches scheduled.</b> Every team counts as playing, which is what a " +
+            "one-off event means. Add one below and the roll call on the " +
             "check page will start showing only the schools expected that day.");
 
       section(document.getElementById("next"), "Coming up", data.upcoming, "next",
@@ -218,7 +239,7 @@ function teamPicker() {
 
 function addForm() {
   var card = el("div", "card");
-  card.append(el("h2", null, "Add a fixture"));
+  card.append(el("h2", null, "Add a match"));
 
   var label = el("input"); label.placeholder = "Week 1";
   var day = el("input"); day.type = "date";
@@ -226,25 +247,41 @@ function addForm() {
   var end = el("input"); end.type = "datetime-local";
   var picker = teamPicker();
 
+  var game = document.createElement("select");
+  var dflt = document.createElement("option");
+  dflt.value = "";
+  dflt.textContent = "the contest default (" + labelFor(DEFAULT_MODE) + ")";
+  game.append(dflt);
+  MODES.forEach(function (m) {
+    var o = document.createElement("option");
+    o.value = m.key;
+    o.textContent = m.label;
+    game.append(o);
+  });
+
   var lWrap = el("div"); lWrap.append(el("label", null, "Label"), label);
   var dWrap = el("div"); dWrap.append(el("label", null, "Date"), day);
   var row1 = el("div", "row"); row1.append(lWrap, dWrap);
+  var gWrap = el("div"); gWrap.append(el("label", null, "Game"), game);
 
   var sWrap = el("div"); sWrap.append(el("label", null, "Start (optional, UTC)"), start);
   var eWrap = el("div"); eWrap.append(el("label", null, "End (optional, UTC)"), end);
   var row2 = el("div", "row"); row2.append(sWrap, eWrap);
 
   card.append(row1, row2);
+  card.append(gWrap);
   card.append(el("label", null, "Teams — leave all unticked for an open night"));
   card.append(picker);
 
   var msg = el("div", "msg");
-  var save = el("button", "primary", "Add fixture");
+  var save = el("button", "primary", "Add a match");
   var actions = el("div"); actions.style.marginTop = "14px"; actions.append(save);
   card.append(actions, msg);
   card.append(el("div", "hint",
-    "A date is enough for most fixtures. Use start and end when the day is not " +
-    "precise enough — both, or neither."));
+    "A date is enough for most matches. Use start and end when the day is not " +
+    "precise enough — both, or neither. Leave the game on the default unless " +
+    "this one is played differently; a match that names a game is scored by " +
+    "that game's rules while it is running."));
 
   save.onclick = function () {
     msg.className = "msg";
@@ -264,12 +301,13 @@ function addForm() {
            in contest.toml, the log timestamps, the scoring window -- so the
            field is labelled UTC and sent as UTC rather than quietly reinterpreted. */
         start: start.value ? start.value + ":00+00:00" : null,
-        end: end.value ? end.value + ":00+00:00" : null
+        end: end.value ? end.value + ":00+00:00" : null,
+        mode: game.value || null
       })
     })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.status); });
-        label.value = ""; day.value = ""; start.value = ""; end.value = "";
+        label.value = ""; day.value = ""; start.value = ""; end.value = ""; game.value = "";
         picker.querySelectorAll("input:checked").forEach(function (c) { c.checked = false; });
         msg.className = "msg ok";
         msg.textContent = "Added.";
@@ -285,7 +323,7 @@ function addForm() {
 
 function signInForm(needsSetup) {
   var card = el("div", "card");
-  card.append(el("h2", null, needsSetup ? "Set the admin password" : "Sign in to change fixtures"));
+  card.append(el("h2", null, needsSetup ? "Set the admin password" : "Sign in to change the schedule"));
 
   if (needsSetup) {
     card.append(el("div", "hint",

@@ -14,6 +14,12 @@ name = "Radio Rumble"
 #                your school owns it, coloured in. Score is territory held.
 #    "dx"        only contacts outside the US count, scored by how many
 #                countries you reach. Drawn on a globe.
+#    "scarcity"  the rarer the contact, the more it is worth.
+#    "connect"   reach a named target.
+#    "traverse"  cross the map from one side to the other.
+#
+#  This is the contest's default. A single match may override it -- see the
+#  schedule below -- so a season can play conquest one week and dx the next.
 #
 #  Settings for each live in the [classic] / [conquest] / [dx] tables below.
 mode = "conquest"
@@ -113,7 +119,7 @@ special_calls = []
 
 
 #  ---------------------------------------------------------------------------
-#  The fixture list. Entirely optional.
+#  The schedule. Entirely optional.
 #
 #  Leave it out and every team counts as playing today, which is what a
 #  one-off event means. Write it and the roll call on /check shows only the
@@ -124,6 +130,7 @@ special_calls = []
 #    date  = 2026-09-12          # the day it is played on
 #    teams = ["KU", "KSU"]       # abbreviations, as in [[teams]] below
 #    label = "Week 1"            # shown on the roll call
+#    mode  = "dx"                # optional; the contest's own game if omitted
 #
 #  Use start/end instead of date when a day is not precise enough:
 #
@@ -132,8 +139,13 @@ special_calls = []
 #    end   = 2026-09-12T20:00:00Z
 #    teams = ["NEB", "ISU"]
 #
-#  A free-for-all is a fixture with nobody named in it. Naming no teams says
-#  the same thing as open = true, because a fixture with nobody in it can only
+#  Matches can also be added from /matches in the browser, which stores them in
+#  the database rather than here. The two are merged, so a season written into
+#  this file and a match typed in on the night both count -- and this file is
+#  never rewritten by the app, so these comments survive.
+#
+#  A free-for-all is a match with nobody named in it. Naming no teams says
+#  the same thing as open = true, because a match with nobody in it can only
 #  mean everybody:
 #
 #    [[matches]]

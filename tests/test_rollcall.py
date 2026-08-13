@@ -29,9 +29,9 @@ def client(monkeypatch):
         yield test_client, application
 
 
-# --------------------------------------------------------------- the fixtures
+# ---------------------------------------------------------------- the matches
 
-def test_with_no_fixture_list_everybody_is_playing(client):
+def test_with_no_schedule_everybody_is_playing(client):
     """Which is what a one-off event means, and what this app was before there
     was any reason to know otherwise."""
     _c, application = client
@@ -39,14 +39,14 @@ def test_with_no_fixture_list_everybody_is_playing(client):
     assert set(application.contest.playing()) == {t.abbr for t in application.contest.teams}
 
 
-def test_a_fixture_narrows_the_roll_call_to_the_teams_playing(client, monkeypatch):
+def test_a_match_narrows_the_roll_call_to_the_teams_playing(client, monkeypatch):
     _c, application = client
     monkeypatch.setattr(application.contest, "matches",
                         (Match(teams=("KU", "KSU"), day=date(2026, 9, 12)),))
     assert application.contest.playing(NOON) == ("KSU", "KU")
 
 
-def test_a_fixture_on_another_day_does_not_count(client, monkeypatch):
+def test_a_match_on_another_day_does_not_count(client, monkeypatch):
     _c, application = client
     monkeypatch.setattr(application.contest, "matches",
                         (Match(teams=("KU",), day=date(2026, 9, 13)),))
@@ -55,10 +55,10 @@ def test_a_fixture_on_another_day_does_not_count(client, monkeypatch):
 
 def test_a_window_is_used_when_a_day_is_not_precise_enough(client, monkeypatch):
     _c, application = client
-    fixture = Match(teams=("NEB",),
+    match = Match(teams=("NEB",),
                     start=datetime(2026, 9, 12, 18, 0, tzinfo=timezone.utc),
                     end=datetime(2026, 9, 12, 20, 0, tzinfo=timezone.utc))
-    monkeypatch.setattr(application.contest, "matches", (fixture,))
+    monkeypatch.setattr(application.contest, "matches", (match,))
     assert application.contest.playing(NOON) == ()
     assert application.contest.playing(
         datetime(2026, 9, 12, 19, 0, tzinfo=timezone.utc)) == ("NEB",)
@@ -181,7 +181,7 @@ def test_a_rostered_event_still_names_the_people_who_are_missing(client):
     assert everyone and all(o["heard"] is False for o in everyone)
 
 
-def test_the_running_fixtures_are_named_for_the_page(client, monkeypatch):
+def test_the_running_matches_are_named_for_the_page(client, monkeypatch):
     from datetime import date, datetime, timezone
 
     from radiorumble.config import Match
@@ -192,5 +192,5 @@ def test_the_running_fixtures_are_named_for_the_page(client, monkeypatch):
                         (Match(teams=("KU",), day=today, label="Week 1"),))
 
     body = test_client.get("/api/stations").json()
-    assert [f["label"] for f in body["fixtures"]] == ["Week 1"]
-    assert body["fixtures"][0]["open"] is False
+    assert [f["label"] for f in body["matches"]] == ["Week 1"]
+    assert body["matches"][0]["open"] is False

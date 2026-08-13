@@ -117,10 +117,10 @@ def test_an_open_field_takes_territory_like_a_team_does():
     assert set(owners.values()) & {t.abbr for t in contest.teams}
 
 
-# ---------------------------------------------------------------- the fixtures
+# ----------------------------------------------------------------- the matches
 
-def test_a_fixture_naming_nobody_is_a_free_for_all():
-    """Because a fixture with nobody in it can only mean everybody."""
+def test_a_match_naming_nobody_is_a_free_for_all():
+    """Because a match with nobody in it can only mean everybody."""
     assert Match(teams=()).is_open is True
     assert Match(teams=("KU",)).is_open is False
     assert Match(teams=("KU",), open=True).is_open is True
@@ -147,16 +147,16 @@ def test_a_season_can_hold_an_open_night_among_team_matches():
     assert len(contest.playing(later)) == len(contest.teams)
 
 
-def test_an_open_event_is_open_whatever_the_fixtures_say():
+def test_an_open_event_is_open_whatever_the_matches_say():
     contest = _open_contest()
     contest.matches = (Match(teams=("KU",), day=date(2026, 9, 12)),)
     assert contest.open_now(NOON) is True
 
 
-def test_fixtures_report_which_ones_are_running():
+def test_happening_reports_which_ones_are_running():
     contest = config.load()
     contest.matches = (
         Match(teams=("KU",), day=date(2026, 9, 12), label="Week 1"),
         Match(teams=("NEB",), day=date(2026, 9, 13), label="Week 2"),
     )
-    assert [m.label for m in contest.fixtures(NOON)] == ["Week 1"]
+    assert [m.label for m in contest.happening(NOON)] == ["Week 1"]

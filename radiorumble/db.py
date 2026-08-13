@@ -5,7 +5,7 @@ Almost everything here comes from somewhere else: the rules from
 both. None of that belongs in a database, and putting it in one would only put
 a query between a question and its answer.
 
-Two things do not come from anywhere else. The fixture list, once it can be
+Two things do not come from anywhere else. The schedule, once it can be
 written from the admin page rather than by hand-editing TOML, and the admin
 password. Both are small, both must survive a restart, and both are read on
 almost every request -- which is what a database is good at and what a JSON
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS matches (
     start_at   TEXT,                            -- ISO datetime, UTC
     end_at     TEXT,
     is_open    INTEGER NOT NULL DEFAULT 0,
+    mode       TEXT,                            -- NULL: play the contest's own
     created_at TEXT    NOT NULL
 );
 
@@ -86,7 +87,25 @@ class Database:
 
     def _prepare(self) -> None:
         self.conn.executescript(SCHEMA)
+        self._add_missing_columns()
         self.conn.commit()
+
+    #: Columns added after the first release. CREATE TABLE IF NOT EXISTS does
+    #: nothing to a table that already exists, so a database made before one of
+    #: these was introduced needs it added -- otherwise the app starts and then
+    #: fails on the first query that mentions it.
+    ADDED_COLUMNS = {
+        "matches": [("mode", "TEXT")],
+    }
+
+    def _add_missing_columns(self) -> None:
+        for table, columns in self.ADDED_COLUMNS.items():
+            have = {row["name"] for row in
+                    self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, decl in columns:
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                    log.info("added %s.%s to the database", table, name)
 
     def close(self) -> None:
         """Only the calling thread's connection; that is all it can reach."""
@@ -117,17 +136,17 @@ class Database:
 
     def add_match(self, *, label: str = "", teams=(), day: date | None = None,
                   start: datetime | None = None, end: datetime | None = None,
-                  is_open: bool = False) -> int:
-        """Store a fixture. Returns its id.
+                  is_open: bool = False, mode: str | None = None) -> int:
+        """Store a match. Returns its id.
 
         Naming no teams means an open night -- the same rule the TOML loader
-        applies, kept identical here so a fixture means the same thing whether
+        applies, kept identical here so a match means the same thing whether
         it was typed into the page or into the file.
         """
         abbrs = [str(t).strip().upper() for t in teams if str(t).strip()]
         cur = self.conn.execute(
-            "INSERT INTO matches (label, teams, day, start_at, end_at, is_open, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO matches (label, teams, day, start_at, end_at, is_open, mode, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 label.strip(),
                 json.dumps(abbrs),
@@ -135,6 +154,7 @@ class Database:
                 start.isoformat() if start else None,
                 end.isoformat() if end else None,
                 1 if (is_open or not abbrs) else 0,
+                mode or None,
                 datetime.now().astimezone().isoformat(timespec="seconds"),
             ),
         )

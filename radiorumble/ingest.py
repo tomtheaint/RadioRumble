@@ -121,11 +121,13 @@ class ContestIngest:
 
     def _rebuild(self) -> None:
         """Rebuild every derived number from the contacts held."""
-        board = Scoreboard(self.contest)
+        key = self.contest.mode_now()
+        board = Scoreboard(self.contest, mode=self.contest.build_mode(key))
         crosscheck = CrossCheck(self.store.qsos, self.contest.match_minutes)
         board.score_store(self.store, crosscheck)
         self.scoreboard = board
         self.crosscheck = crosscheck
+        self._mode_key = key
 
     def ingest_now(self) -> int:
         """Read every log, add what is new, and rebuild. Returns new contacts."""
@@ -149,6 +151,17 @@ class ContestIngest:
 
     def snapshot(self, limit: int = 0) -> dict:
         with self.lock:
+            # A match can name its own game, and matches start and end while
+            # the server is running -- so the rules in force can change with no
+            # log line to prompt a rebuild. Checking here is cheap (a date
+            # comparison per match) and this is the one place every reader
+            # passes through, which makes it the only place that cannot be
+            # forgotten. Rebuilding is rescoring what is already in memory; no
+            # log is re-read.
+            key = self.contest.mode_now()
+            if key != getattr(self, "_mode_key", None):
+                log.info("game changed to %s; rescoring", key)
+                self._rebuild()
             return self.scoreboard.snapshot(limit=limit)
 
     # -- admin ------------------------------------------------------------

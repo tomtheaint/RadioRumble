@@ -4,7 +4,7 @@ Importing ``app`` builds a real application, and a real application opens a
 real database at ``config.DATA_DIR``. Left alone that is ``./data`` in the
 checkout, so simply collecting the tests would create ``data/radiorumble.db``
 next to the source -- and on a machine where somebody had actually used the
-app, run the suite against their fixture list and their admin password.
+app, run the suite against their schedule and their admin password.
 
 This is not a hypothetical. The sister project in this repo group lost three
 CI runs to precisely that shape: one test in nine hundred built the app with

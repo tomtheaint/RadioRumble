@@ -18,7 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / "contest.toml"
 DEFAULT_GRIDS = BASE_DIR / "grid.txt"
 
-#: Everything the app writes rather than reads: the fixture list, the admin
+#: Everything the app writes rather than reads: the schedule, the admin
 #: password, the voided contacts. Separate from the code because in a container
 #: the code is the image and the image is replaced on every deploy -- anything
 #: written beside it is discarded without a word. Voids used to live there, and
@@ -26,14 +26,14 @@ DEFAULT_GRIDS = BASE_DIR / "grid.txt"
 #: to find that out.
 #:
 #: Absolute path from RR_DATA_DIR, or ./data beside the contest file. The
-#: Dockerfile declares it a volume; deploy/docker-compose.yml binds it to
+#: Dockerfile declares it a volume; deploy/compose.yml binds it to
 #: /opt/apps/radiorumble/data on the apps server.
 DATA_DIR = Path(os.environ.get("RR_DATA_DIR") or (BASE_DIR / "data"))
 
 
 @dataclass(frozen=True)
 class Match:
-    """One fixture: who is playing, and when.
+    """One match: who is playing, and when.
 
     Optional. With no `[[matches]]` at all every team counts as playing today,
     which is what a one-off event means and what this app was until there was
@@ -49,16 +49,21 @@ class Match:
     end: object = None
     label: str = ""
     #: A free-for-all: no roster, anybody who shows up is in it. Set on its
-    #: own, or implied by naming no teams -- a fixture with nobody in it can
+    #: own, or implied by naming no teams -- a match with nobody in it can
     #: only mean everybody.
     open: bool = False
+    #: Which game this match is played as, or None to use the contest's own.
+    #: A season is allowed to vary: conquest one week, dx the next, scarcity on
+    #: an open night. The mode was a single setting for the whole event because
+    #: the whole event used to be one afternoon.
+    mode: str | None = None
 
     @property
     def is_open(self) -> bool:
         return self.open or not self.teams
 
     def on(self, when: datetime) -> bool:
-        """Is this fixture happening at that moment?
+        """Is this match running at that moment?
 
         A day is the usual answer: an operator checking in at ten to two cares
         that their team plays *today*, not that the clock has started.
@@ -67,17 +72,17 @@ class Match:
             return self.start <= when <= self.end
         if self.day is not None:
             return self.day == when.date()
-        return True                 # a fixture with no date is always on
+        return True                 # a match with no date is always on
 
     def begins(self) -> datetime | None:
-        """When this fixture starts, for ordering one against another.
+        """When this match starts, for ordering one against another.
 
-        A day-only fixture begins at midnight UTC on that day. That is not when
+        A day-only match begins at midnight UTC on that day. That is not when
         anybody switches a radio on, but it is the right answer for sorting and
         for "is this still to come" -- and picking a plausible-looking hour
-        instead would be inventing a fact the fixture does not carry.
+        instead would be inventing a fact the match does not carry.
 
-        None for a fixture with no date at all, which is always on and so is
+        None for a match with no date at all, which is always on and so is
         never upcoming.
         """
         if self.start:
@@ -88,9 +93,9 @@ class Match:
         return None
 
     def over(self, when: datetime) -> bool:
-        """Has this fixture finished?
+        """Has this match finished?
 
-        Distinct from "not on": a fixture next week is neither on nor over.
+        Distinct from "not on": a match next week is neither on nor over.
         """
         if self.end:
             return when > self.end
@@ -151,7 +156,7 @@ class Contest:
     #: The [listener] table, verbatim. The listener reads its own settings so
     #: adding one never means adding a field here.
     listener: dict = field(default_factory=dict)
-    #: The fixture list, if there is one. Empty means everybody plays today.
+    #: The schedule, if there is one. Empty means everybody plays today.
     matches: tuple = ()
     #: How many rows the scoreboard shows. The rest of the field is still
     #: scored and still holds territory; only the list is shortened, because
@@ -170,11 +175,30 @@ class Contest:
     #: Scoring modifiers. Every one is optional and they stack.
     bonuses: "BonusRules" = None  # type: ignore[assignment]
 
-    def build_mode(self):
-        """The scoring rules for this contest. Imported late to avoid a cycle."""
+    def build_mode(self, key: str | None = None):
+        """The scoring rules to use. Imported late to avoid a cycle.
+
+        `key` overrides the contest's own mode, which is how a match that names
+        one gets played by its own rules.
+        """
         from .modes import build
 
-        return build(self.mode, self.mode_settings)
+        return build(key or self.mode, self.mode_settings)
+
+    def mode_now(self, when: datetime | None = None) -> str:
+        """Which game is being played at that moment.
+
+        The running match's own mode if it names one, otherwise the contest's.
+        With several running at once -- which the schedule allows -- the first
+        one that names a mode wins, in the order they were written. Two
+        simultaneous matches disagreeing about the rules is a contest that has
+        not been thought through, and quietly picking one is a better failure
+        than refusing to score anything.
+        """
+        for match in self.happening(when):
+            if match.mode:
+                return match.mode
+        return self.mode
 
     # -- team lookup ------------------------------------------------------
 
@@ -198,19 +222,19 @@ class Contest:
         """
         return self.compete_as == "open"
 
-    def fixtures(self, when: datetime | None = None) -> tuple:
-        """The matches happening at that moment."""
+    def happening(self, when: datetime | None = None) -> tuple:
+        """The matches running at that moment."""
         moment = when or datetime.now(timezone.utc)
         return tuple(m for m in self.matches if m.on(moment))
 
     def upcoming(self, when: datetime | None = None, limit: int | None = None) -> tuple:
-        """Fixtures still to come, soonest first.
+        """Matches still to come, soonest first.
 
-        Not the same set as "not happening now". A fixture with no date at all
-        is permanently on and therefore never upcoming, and one that finished
-        last week is neither -- `over()` is what separates those two, and
-        without it a season's worth of played matches would sit at the top of
-        the list forever.
+        Not the same set as "not running now". A match with no date at all is
+        permanently on and therefore never upcoming, and one that finished last
+        week is neither -- `over()` is what separates those two, and without it
+        a season's worth of played matches would sit at the top of the list
+        forever.
         """
         moment = when or datetime.now(timezone.utc)
         ahead = [m for m in self.matches
@@ -219,7 +243,7 @@ class Contest:
         return tuple(ahead[:limit] if limit else ahead)
 
     def past(self, when: datetime | None = None, limit: int | None = None) -> tuple:
-        """Fixtures already played, most recent first."""
+        """Matches already played, most recent first."""
         moment = when or datetime.now(timezone.utc)
         done = [m for m in self.matches if m.over(moment)]
         done.sort(key=lambda m: m.begins() or datetime.min.replace(tzinfo=timezone.utc),
@@ -229,30 +253,30 @@ class Contest:
     def open_now(self, when: datetime | None = None) -> bool:
         """Is what is happening right now a free-for-all?
 
-        True when the event itself is open, and also when the fixture running
+        True when the event itself is open, and also when the match running
         is -- a season of team matches can still have an open night in it.
         """
         if self.is_open:
             return True
-        live = self.fixtures(when)
+        live = self.happening(when)
         return bool(live) and all(m.is_open for m in live)
 
     def playing(self, when: datetime | None = None) -> tuple:
         """Which teams are expected at the radio.
 
-        All of them when no fixture list has been written, which is what a
-        single event means -- and all of them again when the fixture running is
+        All of them when no schedule has been written, which is what a single
+        event means -- and all of them again when the match running is
         an open one, because in a free-for-all everybody who has shown up is in
         it by definition.
         """
         if not self.matches:
             return tuple(t.abbr for t in self.teams)
         moment = when or datetime.now(timezone.utc)
-        live = self.fixtures(moment)
+        live = self.happening(moment)
         if any(m.is_open for m in live):
             return tuple(t.abbr for t in self.teams)
         due = {abbr.upper() for m in live for abbr in m.teams}
-        # Ordered as the teams are, not as the fixtures are, so the roll call
+        # Ordered as the teams are, not as the matches are, so the roll call
         # reads the same way the scoreboard does.
         return tuple(t.abbr for t in self.teams if t.abbr.upper() in due)
 
@@ -464,7 +488,9 @@ def _load_matches(raw) -> tuple:
         out.append(Match(teams=teams, day=day, open=wide,
                          start=_as_datetime(entry.get("start")),
                          end=_as_datetime(entry.get("end")),
-                         label=str(entry.get("label", ""))))
+                         label=str(entry.get("label", "")),
+                         mode=str(entry["mode"]).strip().lower()
+                              if entry.get("mode") else None))
     return tuple(out)
 
 

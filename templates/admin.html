@@ -58,7 +58,7 @@
 <div class="wrap">
   <header>
     <h1>Log review</h1>
-    <a class="back" href="./matches">fixtures</a>
+    <a class="back" href="./matches">matches</a>
     <a class="back" href="./listener">listener controls</a>
     <a class="back" href="./">&larr; back to the scoreboard</a>
   </header>
@@ -248,7 +248,7 @@
   });
 
   /* Try the cookie first. Somebody who signed in last week, or on the
-     fixtures page a moment ago, should land straight on the log. */
+     matches page a moment ago, should land straight on the log. */
   refreshAuthState().then(function (state) {
     if (state.signed_in) { signIn(); }
   });
