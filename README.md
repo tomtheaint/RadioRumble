@@ -336,9 +336,11 @@ There are two, and they are one click apart:
 | --- | --- |
 | **[`/listener`](http://localhost:7373/listener)** | Start and stop the WSJT-X listener, and see what it has heard |
 | **[`/admin`](http://localhost:7373/admin)** | Review the log: every contact, its status, and voiding |
+| **[`/matches`](http://localhost:7373/matches)** | The fixture list: what is on, what is next, and adding one |
 
-Both take the same admin token, and a tab that has signed in to one is signed
-in to the other — so `#token=` on either link opens the whole operator side.
+One password covers all three. Sign in on any of them and the rest follow —
+the session is a cookie, so it travels with the browser rather than with the
+tab, and it outlives a restart of the server.
 
 ### The review screen
 
@@ -346,16 +348,20 @@ in to the other — so `#token=` on either link opens the whole operator side.
 status — *NIL only* is the useful one. Voiding removes a contact from every
 total it fed and survives a restart; it is reversible.
 
-Actions need `RR_ADMIN_TOKEN`:
+Actions need the admin password. The first time anybody opens `/admin` on a new
+instance it asks for one to be set; there are no accounts, just the one
+password, and setting it is what claims the instance. Until then every admin
+endpoint answers 409 — an unclaimed instance is not an open one.
+
+Six characters is the minimum. This guards a scoreboard for an afternoon, not a
+bank, and a password somebody has to shout across a radio room should be short
+enough to shout.
+
+Forgotten it? Delete the stored hash and the next visit starts over:
 
 ```bash
-RR_ADMIN_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))') \
-  uv run uvicorn app:app --host 0.0.0.0 --port 7373
+sqlite3 data/radiorumble.db "DELETE FROM settings WHERE key = 'admin_password'"
 ```
-
-If you don't set one, a token is generated per run and written to the server
-log at startup — so the endpoints are never accidentally open, but you also
-can't forget to set it and quietly end up with no protection.
 
 You can also hand the token to either admin page in the address bar, which
 saves typing it on a laptop across the room:
@@ -515,7 +521,7 @@ and becomes a list of who has checked in.
 
 **[`/listener`](http://localhost:7373/listener)** starts and stops it, and
 shows what it has heard — per station and in total, over the last minute, hour
-and day. The page is public; every action on it needs the admin token, like
+and day. The page is public; every action on it needs the admin password, like
 the review screen.
 
 *Clear presence* forgets who has been heard without touching a single logged
@@ -653,11 +659,13 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/api/stations` | Who the listener has heard from. Public, minus the addresses |
 | `/submit` · `/api/submit` | Hand in a full log after the contest. Public |
 | `/listener` | Start, stop, and what has been heard |
-| `/api/listener` · `/start` · `/stop` · `/forget` | The same, as JSON. Needs the admin token |
+| `/api/listener` · `/start` · `/stop` · `/forget` | The same, as JSON. Needs signing in |
 | `/api/health` | Status, how many contacts are held, how many are voided |
 | `/admin` | The review screen |
-| `/api/contacts` | Every contact with its status. Needs the admin token |
+| `/api/contacts` | Every contact with its status. Needs signing in |
 | `/api/contacts/{uid}/void` · `/restore` | Strike one out, or put it back |
+| `/matches` · `/api/matches` | The fixture list. Public to read; signing in to change |
+| `/api/auth` · `/setup` · `/login` · `/logout` | Claim the instance, sign in, sign out |
 
 Reading is incremental — each byte of each log is parsed once — but what is
 *derived* from the contacts is rebuilt from scratch on every change. It has to

@@ -41,6 +41,21 @@ services:
       # the next deploy.
       - ./data:/data
       - ./logs:/app/logs
+
+      # The contest definition, from the host rather than the image, so
+      # changing the rules is an edit and a restart rather than a rebuild and
+      # a redeploy. Read-only because the app never writes it: a fixture added
+      # on /matches goes to the database precisely so this file keeps its
+      # comments, and nothing else here has any business editing it.
+      #
+      # The file MUST exist on the host before this line is added. Docker
+      # creates a *directory* at a bind-mount source that is missing, and the
+      # app would then fail to start with IsADirectoryError on a path that
+      # looks perfectly correct in the compose file. Take the one that is
+      # already running:
+      #
+      #     docker cp radiorumble:/app/contest.toml /opt/apps/radiorumble/contest.toml
+      - ./contest.toml:/app/contest.toml:ro
     environment:
       - TZ=America/Chicago
     logging:

@@ -28,7 +28,21 @@ jobs:
         run: |
           SHA=$(cat /tmp/sha)
           cd src
-          docker build -t ${{ env.IMAGE }}:$SHA -t ${{ env.IMAGE }}:latest .
+          # --progress=plain because the default renderer redraws the whole
+          # step list on every tick, and a log file cannot redraw -- it just
+          # accumulates. One cancelled build here wrote 12,078 lines, each step
+          # repeated 813 times, which reads exactly like a build going in
+          # circles. It was one slow layer, but the log could not say so.
+          #
+          # Detected rather than assumed: the flag is BuildKit-only and the
+          # legacy builder rejects it outright with "unknown flag", which would
+          # turn DOCKER_BUILDKIT=0 -- the escape hatch when BuildKit corrupts
+          # itself -- into a build that cannot start at all.
+          PROGRESS=""
+          if docker build --help 2>&1 | grep -q -- "--progress"; then
+            PROGRESS="--progress=plain"
+          fi
+          docker build $PROGRESS -t ${{ env.IMAGE }}:$SHA -t ${{ env.IMAGE }}:latest .
           docker push ${{ env.IMAGE }}:$SHA
           docker push ${{ env.IMAGE }}:latest
 
