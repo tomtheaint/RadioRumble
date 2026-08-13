@@ -1,0 +1,50 @@
+# Radio Rumble — the stack as it actually runs on the apps server.
+#
+# This is a faithful copy of /opt/apps/radiorumble/compose.yml, kept here
+# because it was not in version control anywhere: if that machine were rebuilt,
+# how this app runs existed only on the machine itself.
+#
+#   /opt/apps/radiorumble/compose.yml   this file
+#   /opt/apps/radiorumble/.env          settings
+#   /opt/apps/radiorumble/data          the state that must survive a deploy
+#   /opt/apps/radiorumble/logs          the contest logs
+#
+# Deployed by the shared dispatcher rather than a per-app script: the CI job
+# runs `ssh deploy@<apps-server> radiorumble`, which the forced command in that
+# account's authorized_keys turns into /usr/local/bin/deploy-app.sh. That does
+# `cd /opt/apps/radiorumble && docker compose pull && docker compose up -d`.
+# appit and cardvault are in the same allowlist.
+#
+# `./data` must be owned by uid 1000 — `appuser` in the image — or the app
+# cannot write its own database:
+#
+#     sudo install -d -o 1000 -g 1000 /opt/apps/radiorumble/data
+
+services:
+  radiorumble:
+    image: git.lab.theislan.com/tom/radiorumble:latest
+    container_name: radiorumble
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # 8001 on the host; the app listens on 7373 inside.
+      - "8001:7373"
+      # WSJT-X reporting, straight from the operators' machines, so these do
+      # have to be reachable on the network the radios are on.
+      - "2237:2237/udp"
+      - "2333:2333/udp"
+    volumes:
+      # The admin password, the fixture list and the voided contacts. The image
+      # sets RR_DATA_DIR=/data and declares it a volume; this is what makes it
+      # a directory on the host rather than an anonymous volume thrown away on
+      # the next deploy.
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      - TZ=America/Chicago
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
