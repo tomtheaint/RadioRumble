@@ -58,6 +58,7 @@
 <div class="wrap">
   <header>
     <h1>Log review</h1>
+    <a class="back" href="./matches">fixtures</a>
     <a class="back" href="./listener">listener controls</a>
     <a class="back" href="./">&larr; back to the scoreboard</a>
   </header>
@@ -65,18 +66,12 @@
   <div class="card" id="auth">
     <div class="row">
       <div>
-        <label for="token">Admin token</label>
-        <input id="token" type="password" placeholder="RR_ADMIN_TOKEN" autocomplete="off" />
+        <label for="password" id="pw-label">Admin password</label>
+        <input id="password" type="password" placeholder="password" autocomplete="current-password" />
       </div>
       <button id="signin">Open the log</button>
     </div>
-    <div class="msg" id="auth-msg">
-      Set <b>RR_ADMIN_TOKEN</b> before starting the server to choose this yourself.
-      If you didn't, one was generated and written to the server's log at startup.
-      You can also open this page as <b>/admin#token=&hellip;</b> to sign in on
-      arrival — it is cleared from the address bar immediately, though it stays
-      in that browser's history.
-    </div>
+    <div class="msg" id="auth-msg"></div>
   </div>
 
   <div id="panel" class="hidden">
@@ -134,19 +129,42 @@
 (function () {
   "use strict";
   var BASE = location.pathname.replace(/\/admin\/?$/, "").replace(/\/+$/, "");
-  /* Same key the listener page uses: these are two views of one job, and being
-     asked for the token again on the way between them is friction with no
-     security value -- the tab already holds it either way. */
-  var token = sessionStorage.getItem("rr-admin") || "";
-
+  /* The session is a cookie now, so there is nothing for this page to carry
+     between requests and nothing to hand to the listener page on the way --
+     the browser does both. What used to be a token in sessionStorage, a
+     header on every call and a #token= in the URL is now none of those. */
   function api(path, opts) {
-    opts = opts || {};
-    opts.headers = Object.assign({ "X-Admin-Token": token }, opts.headers || {});
-    return fetch(BASE + path, opts).then(function (r) {
-      if (r.status === 403) { throw new Error("that token was not accepted"); }
+    return fetch(BASE + path, opts || {}).then(function (r) {
+      if (r.status === 409) { throw new Error("SETUP"); }
+      if (r.status === 403) { throw new Error("sign in to review the log"); }
       if (!r.ok) { return r.json().then(function (d) { throw new Error(d.detail || r.statusText); }); }
       return r.json();
     });
+  }
+
+  /* Three states, not two: unclaimed, claimed-but-not-you, signed in. The
+     first needs a different prompt -- asking somebody for a password that does
+     not exist yet is a dead end. */
+  var needsSetup = false;
+
+  function refreshAuthState() {
+    return fetch(BASE + "/api/auth").then(function (r) { return r.json(); })
+      .then(function (state) {
+        needsSetup = state.needs_setup;
+        var label = document.getElementById("pw-label");
+        var msg = document.getElementById("auth-msg");
+        var btn = document.getElementById("signin");
+        if (needsSetup) {
+          label.textContent = "Choose an admin password";
+          document.getElementById("password").placeholder = "at least 6 characters";
+          document.getElementById("password").setAttribute("autocomplete", "new-password");
+          btn.textContent = "Set password";
+          msg.className = "msg";
+          msg.innerHTML = "Nobody has claimed this instance yet. The first password " +
+                          "set becomes the admin password — there are no accounts, just the one.";
+        }
+        return state;
+      });
   }
 
   function esc(s) {
@@ -193,70 +211,48 @@
       document.getElementById("panel").classList.remove("hidden");
       document.getElementById("auth").classList.add("hidden");
     }).catch(function (e) {
-      msg.textContent = e.message;
-      msg.className = "msg err";
       document.getElementById("panel").classList.add("hidden");
       document.getElementById("auth").classList.remove("hidden");
+      /* "SETUP" is not an error to show. It means the instance is unclaimed,
+         and refreshAuthState has already turned the card into the right
+         prompt -- printing "409" over the top of it would be noise. */
+      if (e.message === "SETUP") { return refreshAuthState(); }
+      msg.textContent = e.message;
+      msg.className = "msg err";
     });
   }
 
-  function remember(value) {
-    token = value;
-    try { sessionStorage.setItem("rr-admin", value); } catch (e) { /* private mode */ }
-  }
-
-  document.getElementById("signin").addEventListener("click", function () {
-    remember(document.getElementById("token").value.trim());
-    signIn();
-  });
-
-  /* A token in the address bar, so a bookmark opens the review screen ready to
-     use -- handy when the operator is on another machine across the room.
-
-     It goes in the fragment (#token=...) rather than the query string on
-     purpose: a fragment never leaves the browser, so the token stays out of
-     uvicorn's access log and out of any proxy in between. It is stripped from
-     the address bar as soon as it is read, so it does not linger on screen or
-     get copied out of the URL by someone reading over a shoulder -- but it is
-     still in the browser's history for that entry, which is why the page says
-     so rather than pretending otherwise. */
-  function tokenFromUrl() {
-    var found = "";
-    [location.hash.slice(1), location.search.slice(1)].forEach(function (part) {
-      if (found || !part) { return; }
-      part.split("&").forEach(function (pair) {
-        var eq = pair.indexOf("=");
-        var key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
-        if (!found && (key === "token" || key === "t")) {
-          found = decodeURIComponent((eq < 0 ? "" : pair.slice(eq + 1)).replace(/\+/g, " "));
-        }
-      });
+  function submitPassword() {
+    var msg = document.getElementById("auth-msg");
+    var pw = document.getElementById("password").value;
+    msg.className = "msg";
+    msg.textContent = "";
+    return fetch(BASE + "/api/auth/" + (needsSetup ? "setup" : "login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw })
+    }).then(function (r) {
+      if (!r.ok) { return r.json().then(function (d) { throw new Error(d.detail || r.statusText); }); }
+      document.getElementById("password").value = "";
+      return refreshAuthState().then(signIn);
+    }).catch(function (e) {
+      msg.className = "msg err";
+      msg.textContent = e.message;
     });
-    return found.trim();
   }
 
-  function useUrlToken() {
-    var found = tokenFromUrl();
-    if (!found) { return false; }
-    remember(found);
-    document.getElementById("token").value = found;
-    history.replaceState(null, "", location.pathname);
-    signIn();
-    return true;
-  }
+  document.getElementById("signin").addEventListener("click", submitPassword);
 
-  // A token from the URL wins; otherwise try the one this tab already has, so
-  // arriving from the listener page opens the log without asking again.
-  if (!useUrlToken() && token) {
-    document.getElementById("token").value = token;
-    signIn();
-  }
-  // Adding the fragment to an already-open page does not reload it, so pick up
-  // a token typed into the address bar of a page that is already sitting here.
-  window.addEventListener("hashchange", useUrlToken);
-  document.getElementById("token").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { document.getElementById("signin").click(); }
+  document.getElementById("password").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { submitPassword(); }
   });
+
+  /* Try the cookie first. Somebody who signed in last week, or on the
+     fixtures page a moment ago, should land straight on the log. */
+  refreshAuthState().then(function (state) {
+    if (state.signed_in) { signIn(); }
+  });
+
   document.getElementById("refresh").addEventListener("click", load);
   document.getElementById("f-team").addEventListener("change", load);
   document.getElementById("f-status").addEventListener("change", load);

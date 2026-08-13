@@ -71,9 +71,10 @@
   <header>
     <h1>WSJT-X listener</h1>
     <a class="back" href="./admin">log review</a>
+    <a class="back" href="./matches">fixtures</a>
     <a class="back" href="./check">public check page</a>
     <span class="spacer"></span>
-    <input type="password" id="token" placeholder="admin token" autocomplete="off" />
+    <span id="whoami" class="back" style="cursor:default"></span>
     <a class="back" href="./">← scoreboard</a>
   </header>
 
@@ -109,42 +110,21 @@
   var BASE = location.pathname.replace(/\/listener\/?$/, "").replace(/\/$/, "");
   var skew = 0;
 
-  var tokenBox = document.getElementById("token");
-
-  /* A token in the address bar, as on the review screen. The fragment form
-     (#token=...) never leaves the browser, so it stays out of the server's
-     access log; it is wiped from the address bar as soon as it is read. */
-  function tokenFromUrl() {
-    var found = "";
-    [location.hash.slice(1), location.search.slice(1)].forEach(function (part) {
-      if (found || !part) { return; }
-      part.split("&").forEach(function (pair) {
-        var eq = pair.indexOf("=");
-        var key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
-        if (!found && (key === "token" || key === "t")) {
-          found = decodeURIComponent((eq < 0 ? "" : pair.slice(eq + 1)).replace(/\+/g, " "));
-        }
+  /* No token box. The session is a cookie set on /admin, so arriving here
+     from the review screen is already signed in and there is nothing to type.
+     What this page does need is to say when you are *not*, because otherwise
+     the start and stop buttons simply fail. */
+  function showWho() {
+    fetch(BASE + "/api/auth").then(function (r) { return r.json(); })
+      .then(function (state) {
+        var box = document.getElementById("whoami");
+        if (state.signed_in) { box.textContent = ""; return; }
+        box.innerHTML = state.needs_setup
+          ? '<a class="back" href="./admin">set an admin password →</a>'
+          : '<a class="back" href="./admin">sign in to control the listener →</a>';
       });
-    });
-    return found.trim();
   }
-
-  function useUrlToken() {
-    var found = tokenFromUrl();
-    if (!found) { return false; }
-    tokenBox.value = found;
-    try { sessionStorage.setItem("rr-admin", found); } catch (e) { /* private mode */ }
-    history.replaceState(null, "", location.pathname);
-    return true;
-  }
-
-  if (!useUrlToken()) { tokenBox.value = sessionStorage.getItem("rr-admin") || ""; }
-  window.addEventListener("hashchange", useUrlToken);
-
-  tokenBox.addEventListener("change", function () {
-    sessionStorage.setItem("rr-admin", tokenBox.value);
-    poll();
-  });
+  showWho();
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -159,14 +139,10 @@
     return Math.round(seconds / 3600) + " h";
   }
 
-  function headers() {
-    return { "X-Admin-Token": tokenBox.value || "" };
-  }
-
   function act(path) {
-    fetch(BASE + "/api/listener/" + path, { method: "POST", headers: headers() })
+    fetch(BASE + "/api/listener/" + path, { method: "POST" })
       .then(function (r) {
-        if (r.status === 403) { throw new Error("admin token required"); }
+        if (r.status === 403) { throw new Error("sign in on /admin to control the listener"); }
         return r.json();
       })
       .then(function (d) {
@@ -248,9 +224,9 @@
   }
 
   function poll() {
-    fetch(BASE + "/api/listener", { cache: "no-store", headers: headers() })
+    fetch(BASE + "/api/listener", { cache: "no-store" })
       .then(function (r) {
-        if (r.status === 403) { throw new Error("admin token required"); }
+        if (r.status === 403) { throw new Error("sign in on /admin to control the listener"); }
         return r.json();
       })
       .then(function (d) {

@@ -18,6 +18,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / "contest.toml"
 DEFAULT_GRIDS = BASE_DIR / "grid.txt"
 
+#: Everything the app writes rather than reads: the fixture list, the admin
+#: password, the voided contacts. Separate from the code because in a container
+#: the code is the image and the image is replaced on every deploy -- anything
+#: written beside it is discarded without a word. Voids used to live there, and
+#: an official's judgement quietly reversing itself after an update is a bad way
+#: to find that out.
+#:
+#: Absolute path from RR_DATA_DIR, or ./data beside the contest file. The
+#: Dockerfile declares it a volume; deploy/docker-compose.yml binds it to
+#: /opt/apps/radiorumble/data on the apps server.
+DATA_DIR = Path(os.environ.get("RR_DATA_DIR") or (BASE_DIR / "data"))
+
 
 @dataclass(frozen=True)
 class Match:
@@ -56,6 +68,35 @@ class Match:
         if self.day is not None:
             return self.day == when.date()
         return True                 # a fixture with no date is always on
+
+    def begins(self) -> datetime | None:
+        """When this fixture starts, for ordering one against another.
+
+        A day-only fixture begins at midnight UTC on that day. That is not when
+        anybody switches a radio on, but it is the right answer for sorting and
+        for "is this still to come" -- and picking a plausible-looking hour
+        instead would be inventing a fact the fixture does not carry.
+
+        None for a fixture with no date at all, which is always on and so is
+        never upcoming.
+        """
+        if self.start:
+            return self.start
+        if self.day is not None:
+            return datetime(self.day.year, self.day.month, self.day.day,
+                            tzinfo=timezone.utc)
+        return None
+
+    def over(self, when: datetime) -> bool:
+        """Has this fixture finished?
+
+        Distinct from "not on": a fixture next week is neither on nor over.
+        """
+        if self.end:
+            return when > self.end
+        if self.day is not None:
+            return when.date() > self.day
+        return False                # no date, always on, never over
 
 
 @dataclass(frozen=True)
@@ -161,6 +202,29 @@ class Contest:
         """The matches happening at that moment."""
         moment = when or datetime.now(timezone.utc)
         return tuple(m for m in self.matches if m.on(moment))
+
+    def upcoming(self, when: datetime | None = None, limit: int | None = None) -> tuple:
+        """Fixtures still to come, soonest first.
+
+        Not the same set as "not happening now". A fixture with no date at all
+        is permanently on and therefore never upcoming, and one that finished
+        last week is neither -- `over()` is what separates those two, and
+        without it a season's worth of played matches would sit at the top of
+        the list forever.
+        """
+        moment = when or datetime.now(timezone.utc)
+        ahead = [m for m in self.matches
+                 if not m.on(moment) and not m.over(moment) and m.begins()]
+        ahead.sort(key=lambda m: m.begins())
+        return tuple(ahead[:limit] if limit else ahead)
+
+    def past(self, when: datetime | None = None, limit: int | None = None) -> tuple:
+        """Fixtures already played, most recent first."""
+        moment = when or datetime.now(timezone.utc)
+        done = [m for m in self.matches if m.over(moment)]
+        done.sort(key=lambda m: m.begins() or datetime.min.replace(tzinfo=timezone.utc),
+                  reverse=True)
+        return tuple(done[:limit] if limit else done)
 
     def open_now(self, when: datetime | None = None) -> bool:
         """Is what is happening right now a free-for-all?

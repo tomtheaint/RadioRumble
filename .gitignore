@@ -11,3 +11,7 @@ mock_raw_listener_output.txt
 
 # Voided contacts are a judgement made during one event, not source.
 voided.json
+
+# Runtime state: the admin password, the fixture list, voided contacts.
+# Belongs on a volume, never in the repository.
+data/

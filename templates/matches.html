@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Radio Rumble — Fixtures</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#141922; --panel-2:#1b212c; --line:#263042;
+    --text:#e8edf5; --muted:#8b97ad; --dim:#5d6980; --live:#3fd07f; --bad:#ff8080;
+    --warm:#ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 60px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+           padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  h1 { font-size:20px; margin:0; }
+  a.back { color:#4da3ff; text-decoration:none; font-size:13px; }
+  a.back:hover { text-decoration:underline; }
+  a.back.first { margin-left:auto; }
+
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--muted); margin:22px 0 8px; font-weight:600; }
+
+  .fix { display:flex; align-items:center; gap:12px; padding:12px 14px;
+         border:1px solid var(--line); border-radius:10px; background:var(--panel);
+         margin-bottom:8px; }
+  .fix .when { color:var(--muted); font-size:13px; min-width:130px; flex:0 0 auto; }
+  .fix .who { font-weight:600; }
+  .fix .label { color:var(--muted); font-size:13px; }
+  .fix .spacer { margin-left:auto; }
+  .fix.live { border-color:var(--live); background:#12241a; }
+  .fix.done { opacity:.55; }
+
+  .pill { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+          padding:2px 8px; border-radius:999px; border:1px solid var(--line);
+          color:var(--muted); }
+  .pill.live { border-color:var(--live); color:var(--live); }
+  .pill.open { border-color:var(--warm); color:var(--warm); }
+
+  .empty { border:1px dashed var(--line); border-radius:10px; padding:16px;
+           color:var(--muted); font-size:13.5px; background:var(--panel); }
+  .empty b { color:var(--text); }
+
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          padding:14px 16px; margin-bottom:18px; }
+  label { display:block; font-size:12.5px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; padding:8px 10px; border-radius:8px;
+                  border:1px solid var(--line); background:var(--panel-2);
+                  color:var(--text); font:inherit; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div { flex:1 1 180px; }
+  button { padding:8px 14px; border-radius:8px; border:1px solid var(--line);
+           background:var(--panel-2); color:var(--text); font:inherit; cursor:pointer; }
+  button.primary { background:#1d4ed8; border-color:#1d4ed8; }
+  button.danger { border-color:#5a2530; color:var(--bad); padding:4px 10px;
+                  font-size:12px; }
+  button:hover { filter:brightness(1.15); }
+  .msg { margin-top:10px; font-size:13px; }
+  .msg.err { color:var(--bad); }
+  .msg.ok { color:var(--live); }
+  .hint { color:var(--dim); font-size:12.5px; margin-top:6px; }
+  .teams-pick { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .teams-pick label { display:inline-flex; align-items:center; gap:5px; margin:0;
+                      padding:5px 9px; border:1px solid var(--line); border-radius:999px;
+                      background:var(--panel-2); color:var(--text); font-size:13px;
+                      cursor:pointer; }
+  .teams-pick input { width:auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Fixtures</h1>
+    <a class="back first" href="./">← scoreboard</a>
+    <a class="back" href="./check">check page</a>
+    <a class="back" href="./admin">log review</a>
+  </header>
+
+  <div id="live"></div>
+  <div id="next"></div>
+  <div id="past"></div>
+
+  <!-- Only rendered once we know an official is signed in. A form that
+       returns 403 on submit is worse than no form. -->
+  <div id="adminArea"></div>
+</div>
+
+<script>
+"use strict";
+
+var TEAMS = [];
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+/* A fixture's own words for when it happens. A day-only fixture says the day
+   and nothing else -- inventing a time it does not carry would be a lie the
+   page told, not a fact the fixture has. */
+function whenText(f) {
+  if (f.start && f.end) {
+    var s = new Date(f.start), e = new Date(f.end);
+    var sameDay = s.toDateString() === e.toDateString();
+    return s.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) +
+           " – " + (sameDay ? e.toLocaleTimeString([], { timeStyle: "short" })
+                            : e.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }));
+  }
+  if (f.day) {
+    var d = new Date(f.day + "T00:00:00Z");
+    return d.toLocaleDateString([], { dateStyle: "full" });
+  }
+  return "any time";
+}
+
+function whoText(f) {
+  if (f.open) return "Open — anybody who turns up";
+  return f.teams.join("  v  ");
+}
+
+function fixtureRow(f, kind) {
+  var row = el("div", "fix" + (kind === "live" ? " live" : kind === "done" ? " done" : ""));
+  row.append(el("div", "when", whenText(f)));
+
+  var who = el("div");
+  who.append(el("div", "who", whoText(f)));
+  if (f.label) who.append(el("div", "label", f.label));
+  row.append(who);
+
+  var spacer = el("div", "spacer");
+  row.append(spacer);
+
+  if (kind === "live") row.append(el("span", "pill live", "on now"));
+  if (f.open && kind !== "live") row.append(el("span", "pill open", "open"));
+
+  /* Only fixtures this app stored can be removed from it. One written into
+     contest.toml says so instead, because a delete button that cannot work is
+     a worse answer than an explanation. */
+  if (f.editable) {
+    var del = el("button", "danger", "remove");
+    del.onclick = function () { removeFixture(f.id, row); };
+    row.append(del);
+  } else {
+    var tag = el("span", "pill", "contest.toml");
+    tag.title = "Written in contest.toml. Edit it there.";
+    row.append(tag);
+  }
+  return row;
+}
+
+function section(host, title, items, kind, emptyHtml) {
+  host.innerHTML = "";
+  if (!items.length && !emptyHtml) return;
+  host.append(el("h2", null, title));
+  if (!items.length) {
+    var e = el("div", "empty");
+    e.innerHTML = emptyHtml;
+    host.append(e);
+    return;
+  }
+  items.forEach(function (f) { host.append(fixtureRow(f, kind)); });
+}
+
+function removeFixture(id, row) {
+  fetch("./api/matches/" + id, { method: "DELETE" })
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.status); });
+      row.remove();
+      load();
+    })
+    .catch(function (err) { alert(err.message); });
+}
+
+function load() {
+  return fetch("./api/matches")
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      TEAMS = data.teams || [];
+
+      section(document.getElementById("live"), "On now", data.now, "live",
+        data.any
+          ? "Nothing is scheduled for right now."
+          : "<b>No fixture list.</b> Every team counts as playing, which is what a " +
+            "one-off event means. Add a fixture below and the roll call on the " +
+            "check page will start showing only the schools expected that day.");
+
+      section(document.getElementById("next"), "Coming up", data.upcoming, "next",
+        data.any ? "Nothing else is scheduled." : "");
+
+      section(document.getElementById("past"), "Already played", data.past, "done", "");
+      return data;
+    });
+}
+
+/* -- the admin half ------------------------------------------------------ */
+
+function teamPicker() {
+  var box = el("div", "teams-pick");
+  TEAMS.forEach(function (t) {
+    var lab = el("label");
+    var cb = el("input");
+    cb.type = "checkbox";
+    cb.value = t.abbr;
+    lab.append(cb, document.createTextNode(t.abbr));
+    lab.title = t.name;
+    box.append(lab);
+  });
+  if (!TEAMS.length) {
+    box.append(el("div", "hint", "No teams in contest.toml yet."));
+  }
+  return box;
+}
+
+function addForm() {
+  var card = el("div", "card");
+  card.append(el("h2", null, "Add a fixture"));
+
+  var label = el("input"); label.placeholder = "Week 1";
+  var day = el("input"); day.type = "date";
+  var start = el("input"); start.type = "datetime-local";
+  var end = el("input"); end.type = "datetime-local";
+  var picker = teamPicker();
+
+  var lWrap = el("div"); lWrap.append(el("label", null, "Label"), label);
+  var dWrap = el("div"); dWrap.append(el("label", null, "Date"), day);
+  var row1 = el("div", "row"); row1.append(lWrap, dWrap);
+
+  var sWrap = el("div"); sWrap.append(el("label", null, "Start (optional, UTC)"), start);
+  var eWrap = el("div"); eWrap.append(el("label", null, "End (optional, UTC)"), end);
+  var row2 = el("div", "row"); row2.append(sWrap, eWrap);
+
+  card.append(row1, row2);
+  card.append(el("label", null, "Teams — leave all unticked for an open night"));
+  card.append(picker);
+
+  var msg = el("div", "msg");
+  var save = el("button", "primary", "Add fixture");
+  var actions = el("div"); actions.style.marginTop = "14px"; actions.append(save);
+  card.append(actions, msg);
+  card.append(el("div", "hint",
+    "A date is enough for most fixtures. Use start and end when the day is not " +
+    "precise enough — both, or neither."));
+
+  save.onclick = function () {
+    msg.className = "msg";
+    msg.textContent = "";
+    var teams = Array.prototype.slice
+      .call(picker.querySelectorAll("input:checked"))
+      .map(function (c) { return c.value; });
+
+    fetch("./api/matches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: label.value,
+        teams: teams,
+        day: day.value || null,
+        /* datetime-local has no zone. This app is UTC throughout -- the clock
+           in contest.toml, the log timestamps, the scoring window -- so the
+           field is labelled UTC and sent as UTC rather than quietly reinterpreted. */
+        start: start.value ? start.value + ":00+00:00" : null,
+        end: end.value ? end.value + ":00+00:00" : null
+      })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.status); });
+        label.value = ""; day.value = ""; start.value = ""; end.value = "";
+        picker.querySelectorAll("input:checked").forEach(function (c) { c.checked = false; });
+        msg.className = "msg ok";
+        msg.textContent = "Added.";
+        load();
+      })
+      .catch(function (err) {
+        msg.className = "msg err";
+        msg.textContent = err.message;
+      });
+  };
+  return card;
+}
+
+function signInForm(needsSetup) {
+  var card = el("div", "card");
+  card.append(el("h2", null, needsSetup ? "Set the admin password" : "Sign in to change fixtures"));
+
+  if (needsSetup) {
+    card.append(el("div", "hint",
+      "Nobody has claimed this instance yet. The first password set becomes the " +
+      "admin password; there are no accounts, just the one."));
+  }
+
+  var pw = el("input");
+  pw.type = "password";
+  pw.placeholder = needsSetup ? "at least 6 characters" : "password";
+  card.append(el("label", null, "Password"), pw);
+
+  var msg = el("div", "msg");
+  var go = el("button", "primary", needsSetup ? "Set password" : "Sign in");
+  var actions = el("div"); actions.style.marginTop = "14px"; actions.append(go);
+  card.append(actions, msg);
+
+  function submit() {
+    msg.className = "msg";
+    msg.textContent = "";
+    fetch("./api/auth/" + (needsSetup ? "setup" : "login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw.value })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.status); });
+        renderAdmin();
+      })
+      .catch(function (err) {
+        msg.className = "msg err";
+        msg.textContent = err.message;
+      });
+  }
+  go.onclick = submit;
+  pw.onkeydown = function (e) { if (e.key === "Enter") submit(); };
+  return card;
+}
+
+function renderAdmin() {
+  var host = document.getElementById("adminArea");
+  return fetch("./api/auth")
+    .then(function (r) { return r.json(); })
+    .then(function (state) {
+      host.innerHTML = "";
+      if (state.signed_in) {
+        host.append(addForm());
+        var out = el("button", null, "Sign out");
+        out.onclick = function () {
+          fetch("./api/auth/logout", { method: "POST" }).then(renderAdmin);
+        };
+        var foot = el("div"); foot.style.marginTop = "6px"; foot.append(out);
+        host.append(foot);
+      } else {
+        host.append(signInForm(state.needs_setup));
+      }
+    });
+}
+
+load().then(renderAdmin);
+</script>
+</body>
+</html>

@@ -16,15 +16,13 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import os
-import secrets
-
-from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException,
-                     UploadFile, WebSocket, WebSocketDisconnect)
+from fastapi import (Body, Cookie, Depends, FastAPI, File, Form, HTTPException,
+                     Request, Response, UploadFile, WebSocket, WebSocketDisconnect)
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from radiorumble import config
+from radiorumble import auth, config, fixtures
+from radiorumble.db import Database
 from radiorumble.ingest import ContestIngest
 from radiorumble.listener import WsjtxListener
 
@@ -36,6 +34,13 @@ TEMPLATE = BASE_DIR / "templates" / "index.html"
 ADMIN_TEMPLATE = BASE_DIR / "templates" / "admin.html"
 
 contest = config.load()
+
+#  The fixture list and the admin password, in the data directory rather than
+#  beside the code -- in a container the code is the image, and anything
+#  written next to it goes away on the next deploy.
+db = Database(config.DATA_DIR / "radiorumble.db")
+fixtures.apply(contest, db)
+
 ingest = ContestIngest(contest)
 
 #  Contacts arrive here as UDP from every operator's WSJT-X and are written
@@ -51,12 +56,17 @@ listener = WsjtxListener(
     fallback=contest.log_file,
 )
 
-# Voiding a contact changes somebody's score, so it is not something a
-# spectator gets to do. One shared token is the right weight for a two-hour
-# event: no accounts to create, and nothing to leave behind afterwards.
-# Generated if unset so the endpoints are never accidentally open.
-ADMIN_TOKEN = os.environ.get("RR_ADMIN_TOKEN") or secrets.token_urlsafe(16)
-ADMIN_TOKEN_GENERATED = "RR_ADMIN_TOKEN" not in os.environ
+# Voiding a contact changes somebody's score, and the fixture list decides who
+# is expected at the radio, so neither is something a spectator gets to do.
+#
+# This used to be one shared token, generated at boot if RR_ADMIN_TOKEN was
+# unset. That suited an app whose admin page only struck out contacts during a
+# two-hour event -- nothing to set up, nothing left behind. It stopped suiting
+# one that owns a fixture list: a generated token changes on every restart, and
+# a fixed one is a secret in the environment of every shell that starts the
+# server. A password chosen once on first launch is less to ask.
+#
+# radiorumble/auth.py has the mechanics and the reasoning behind them.
 
 
 def _snapshot() -> dict:
@@ -89,10 +99,19 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def require_admin(x_admin_token: str = Header(default="")) -> None:
-    """Constant-time comparison, so the token can't be guessed a byte at a time."""
-    if not secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
-        raise HTTPException(status_code=403, detail="admin token required")
+def require_admin(rr_admin: str = Cookie(default="")) -> None:
+    """Every admin endpoint depends on this.
+
+    409 rather than 403 while no password has been set, because the two are
+    different problems with different answers: "sign in" and "claim this
+    instance". A page that cannot tell them apart shows a login form to
+    somebody who has no password to type.
+    """
+    if auth.needs_setup(db):
+        raise HTTPException(status_code=409,
+                            detail="no admin password has been set on this instance yet")
+    if not auth.valid_session(db, rr_admin):
+        raise HTTPException(status_code=403, detail="sign in on /admin")
 
 # Live websocket connections. Only the event loop touches this set.
 clients: set[WebSocket] = set()
@@ -137,9 +156,11 @@ async def lifespan(app: FastAPI):
         snapshot["totals"]["qsos_scored"],
         contest.status,
     )
-    if ADMIN_TOKEN_GENERATED:
-        log.info("admin token for this run: %s  (set RR_ADMIN_TOKEN to fix it)",
-                 ADMIN_TOKEN)
+    if auth.needs_setup(db):
+        log.info("no admin password set yet -- open /admin to choose one")
+    log.info("%d fixture(s): %d from contest.toml, %d added from the admin page",
+             len(contest.matches), len(getattr(contest, "file_matches", ())),
+             len(contest.matches) - len(getattr(contest, "file_matches", ())))
 
     if (contest.listener or {}).get("enabled", True):
         started, message = listener.start()
@@ -455,6 +476,192 @@ async def health() -> JSONResponse:
 async def admin_page() -> HTMLResponse:
     """The review screen. The page is public; every action on it is not."""
     return HTMLResponse(ADMIN_TEMPLATE.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- signing in
+
+COOKIE_NAME = auth.COOKIE_NAME
+
+
+def _with_session(payload: dict, value: str, status: int = 200) -> JSONResponse:
+    """A JSON reply carrying a fresh admin cookie.
+
+    The cookie goes on the response being *returned*, not on an injected
+    `Response` parameter. FastAPI only merges an injected response's headers
+    when the handler returns a plain dict; return a JSONResponse and it
+    replaces the lot, cookie included. That failed silently -- the login
+    answered 200 and set nothing, so every later request was refused with no
+    clue why. The tests caught it; a person would have been baffled.
+
+    Not `secure=True`: this app is routinely run on a laptop at an event and
+    reached over plain HTTP on the local network, and a Secure cookie would be
+    silently dropped there -- the login would appear to work and every
+    subsequent request would be refused, which is a miserable thing to debug at
+    a radio club. Behind the tunnel it is HTTPS anyway.
+
+    `samesite=lax` and `httponly` still apply: no cross-site posting, and no
+    reading it from script.
+    """
+    response = JSONResponse(payload, status_code=status)
+    response.set_cookie(COOKIE_NAME, value, max_age=auth.SESSION_SECONDS,
+                        httponly=True, samesite="lax", path="/")
+    return response
+
+
+@app.get("/api/auth")
+async def auth_status(rr_admin: str = Cookie(default="")) -> JSONResponse:
+    """What the operator pages ask before deciding what to draw.
+
+    Three states, not two: nobody has claimed this instance, somebody has and
+    you are not them, or you are signed in.
+    """
+    return JSONResponse({
+        "needs_setup": auth.needs_setup(db),
+        "signed_in": auth.valid_session(db, rr_admin),
+    })
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(password: str = Body(..., embed=True)) -> JSONResponse:
+    """Claim this instance by choosing the admin password.
+
+    Refused once a password exists, because otherwise it is not a setup route,
+    it is a password reset with no authentication in front of it.
+    """
+    if not auth.needs_setup(db):
+        raise HTTPException(status_code=409, detail="a password has already been set")
+    try:
+        auth.set_password(db, password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("admin password set; this instance is now claimed")
+    return _with_session({"ok": True}, auth.issue_session(db))
+
+
+@app.post("/api/auth/login")
+async def auth_login(password: str = Body(..., embed=True)) -> JSONResponse:
+    if auth.needs_setup(db):
+        raise HTTPException(status_code=409, detail="no password has been set yet")
+    if not auth.check_password(db, password):
+        # Deliberately not "wrong password" versus "no such account": there is
+        # only one account, so the only thing that could vary is the password,
+        # and saying so adds nothing an attacker did not already know.
+        raise HTTPException(status_code=403, detail="that password was not accepted")
+    return _with_session({"ok": True}, auth.issue_session(db))
+
+
+@app.post("/api/auth/logout")
+async def auth_logout() -> JSONResponse:
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+# ------------------------------------------------------------- the fixtures
+
+MATCHES_TEMPLATE = BASE_DIR / "templates" / "matches.html"
+
+
+@app.get("/matches", response_class=HTMLResponse)
+async def matches_page() -> HTMLResponse:
+    """The fixture list. Readable by anyone; only an official may change it."""
+    return HTMLResponse(MATCHES_TEMPLATE.read_text(encoding="utf-8"))
+
+
+def _fixture_ids() -> dict:
+    """Map each stored fixture back to its row id.
+
+    The contest holds `Match` objects with no idea where they came from, which
+    is right -- the scoring rules should not care. But the page needs to know
+    which ones it may delete, so the mapping is rebuilt here from the rows
+    rather than smuggled into the dataclass.
+    """
+    out = {}
+    for row in db.all_matches():
+        out[fixtures.match_from_row(row)] = row["id"]
+    return out
+
+
+@app.get("/api/matches")
+async def list_matches() -> JSONResponse:
+    """Now, next, and already played."""
+    now = datetime.now(timezone.utc)
+    ids = _fixture_ids()
+
+    def described(items):
+        return [fixtures.describe(m, ids.get(m)) for m in items]
+
+    return JSONResponse({
+        "now": described(contest.fixtures(now)),
+        "upcoming": described(contest.upcoming(now)),
+        "past": described(contest.past(now, limit=20)),
+        "playing": list(contest.playing(now)),
+        "open_now": contest.open_now(now),
+        "teams": [{"abbr": t.abbr, "name": t.name} for t in contest.teams],
+        "server_time": now.isoformat(),
+        # Nothing at all is a state the page should say out loud rather than
+        # render as an empty list, because it is the normal state of a fresh
+        # install and it means "every team counts as playing".
+        "any": bool(contest.matches),
+    })
+
+
+@app.post("/api/matches", dependencies=[Depends(require_admin)])
+async def create_match(payload: dict = Body(...)) -> JSONResponse:
+    """Add a fixture.
+
+    A date or a start/end window, never neither: a fixture with no date is
+    permanently on, which silences every other fixture in the list and is
+    almost certainly a typo rather than an intention. The TOML loader allows it
+    because a hand-written file is a considered act; a form submission is not.
+    """
+    label = str(payload.get("label", "")).strip()
+    teams = [str(t).strip().upper() for t in payload.get("teams", []) if str(t).strip()]
+    wide = bool(payload.get("open")) or not teams
+
+    day = fixtures._parse_date(payload.get("day"))
+    start = fixtures._parse_datetime(payload.get("start"))
+    end = fixtures._parse_datetime(payload.get("end"))
+
+    if not day and not (start and end):
+        raise HTTPException(
+            status_code=400,
+            detail="Give a date, or both a start and an end. A fixture with no "
+                   "date is always on, which would hide every other one.")
+    if start and end and end <= start:
+        raise HTTPException(status_code=400, detail="The end has to be after the start.")
+
+    known = {t.abbr.upper() for t in contest.teams}
+    unknown = [t for t in teams if t not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No team called {', '.join(unknown)}. Teams come from "
+                   f"contest.toml; add a [[teams]] block there first.")
+
+    match_id = db.add_match(label=label, teams=teams, day=day,
+                            start=start, end=end, is_open=wide)
+    fixtures.apply(contest, db)
+    log.info("fixture %d added: %s", match_id, label or (", ".join(teams) or "open night"))
+    return JSONResponse({"id": match_id}, status_code=201)
+
+
+@app.delete("/api/matches/{match_id}", dependencies=[Depends(require_admin)])
+async def remove_match(match_id: int) -> JSONResponse:
+    """Delete a stored fixture.
+
+    Only ones this app wrote. A fixture from contest.toml has no id to address
+    and is not the app's to remove -- saying where it lives is more use than a
+    404 would be.
+    """
+    if not db.delete_match(match_id):
+        raise HTTPException(
+            status_code=404,
+            detail="No stored fixture with that id. Fixtures written in "
+                   "contest.toml are edited there, not here.")
+    fixtures.apply(contest, db)
+    log.info("fixture %d deleted", match_id)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/contacts", dependencies=[Depends(require_admin)])

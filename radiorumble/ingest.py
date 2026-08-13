@@ -24,7 +24,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from . import adif
+from . import adif, config
 from .scoring import Scoreboard
 from .store import QsoStore
 from .verify import CrossCheck
@@ -83,7 +83,7 @@ class ContestIngest:
 
     def __init__(self, contest, on_change=None) -> None:
         self.contest = contest
-        self.store = QsoStore(voids_path=contest.log_file.parent / "voided.json")
+        self.store = QsoStore(voids_path=config.DATA_DIR / "voided.json")
         self.lock = threading.Lock()
         self.on_change = on_change
         self._observer = None

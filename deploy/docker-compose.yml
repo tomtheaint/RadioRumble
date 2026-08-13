@@ -1,0 +1,63 @@
+# Radio Rumble — production stack for the apps server.
+#
+# Pulls the image CI built rather than building from source: the apps server
+# keeps no checkout.
+#
+#   /opt/apps/radiorumble/docker-compose.yml   this file
+#   /opt/apps/radiorumble/.env                 settings, if any are needed
+#   /opt/apps/radiorumble/data                 the state that must survive
+#
+# Small state, but not disposable: the admin password, the fixture list and the
+# voided contacts. A void is an official's judgement about somebody's score,
+# and losing one during an event silently gives points back.
+
+services:
+  app:
+    image: ${RADIORUMBLE_IMAGE:-git.lab.theislan.com/tom/radiorumble:latest}
+    restart: unless-stopped
+
+    environment:
+      # Where the database and voided.json live inside the container. Matches
+      # the volume below; the Dockerfile sets the same default.
+      RR_DATA_DIR: /data
+
+    volumes:
+      # A bind mount rather than a named volume, so the fixture list and the
+      # password are somewhere a person can find, back up and copy between
+      # hosts without having to ask Docker where it put them.
+      #
+      # Must be owned by uid 1000 — the `appuser` in the image — or the app
+      # cannot write its own database:
+      #
+      #     sudo install -d -o 1000 -g 1000 /opt/apps/radiorumble/data
+      - ${RADIORUMBLE_DATA:-/opt/apps/radiorumble/data}:/data
+
+      # The contest definition, mounted read-only from the host so the rules
+      # can be changed without rebuilding the image. Read-only on purpose: the
+      # app never writes this file, and a fixture added on the page goes to the
+      # database instead precisely so that this one keeps its comments.
+      - ${RADIORUMBLE_CONFIG:-/opt/apps/radiorumble/contest.toml}:/app/contest.toml:ro
+
+      # The logs the scoreboard reads, and where the WSJT-X listener writes
+      # what it hears.
+      - ${RADIORUMBLE_LOGS:-/opt/apps/radiorumble/logs}:/app/logs
+
+    ports:
+      # Bound to the apps server's own address rather than every interface, so
+      # it is reachable on the LAN and through the tunnel but is not quietly
+      # listening anywhere else. Set RADIORUMBLE_BIND to 127.0.0.1 if a proxy
+      # ever runs on this host.
+      - "${RADIORUMBLE_BIND:-10.20.20.60}:${RADIORUMBLE_PORT:-7373}:7373"
+
+      # WSJT-X reporting. UDP, and from the operators' machines directly, so
+      # this one does have to be reachable on the network the radios are on.
+      - "${RADIORUMBLE_BIND:-10.20.20.60}:2237:2237/udp"
+      - "${RADIORUMBLE_BIND:-10.20.20.60}:2333:2333/udp"
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7373/api/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

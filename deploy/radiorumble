@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#
+# radiorumble — deploy command, run on the apps server.
+#
+# Installed at /usr/local/bin/radiorumble and invoked by CI over ssh:
+#
+#     ssh deploy@<apps-server> radiorumble
+#
+# It pulls whatever the registry currently tags as latest and restarts the
+# stack. There is no build step here and no source checkout on this host: CI
+# built the image, this only runs it.
+#
+# Safe to run by hand. Safe to run twice.
+
+set -euo pipefail
+
+# One folder per application under /opt/apps, alongside the others already
+# there. Override with RADIORUMBLE_STACK_DIR if this ever moves.
+STACK_DIR="${RADIORUMBLE_STACK_DIR:-/opt/apps/radiorumble}"
+
+cd "$STACK_DIR"
+
+echo "==> Pulling images"
+docker compose pull
+
+echo "==> Starting stack"
+# --remove-orphans so a service renamed in compose does not linger.
+docker compose up -d --remove-orphans
+
+echo "==> Waiting for health"
+# Read the state from `docker inspect` rather than `docker compose ps --format
+# json`, whose shape has changed between Compose versions. The health status is
+# the one worth waiting on: radiorumble's healthcheck calls /healthz, which touches
+# the database, so a healthy app means Postgres answered too.
+for _ in $(seq 1 60); do
+    cid=$(docker compose ps -q app 2>/dev/null || true)
+    if [ -n "$cid" ]; then
+        state=$(docker inspect -f \
+            '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+            "$cid" 2>/dev/null || echo unknown)
+        # `restart: unless-stopped` means a container that cannot start comes
+        # back as "restarting" rather than "exited", so waiting for a dead
+        # state would burn the whole timeout on what is already a failure.
+        restarts=$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0)
+        case "$state" in
+            healthy)
+                echo "==> radiorumble is healthy"
+                docker image prune -f >/dev/null 2>&1 || true
+                exit 0
+                ;;
+            exited|dead)
+                echo "!! radiorumble container is $state" >&2
+                docker compose logs --tail 50 app >&2
+                exit 1
+                ;;
+        esac
+        if [ "${restarts:-0}" -gt 2 ]; then
+            echo "!! radiorumble has restarted ${restarts} times — treating as failed" >&2
+            docker compose logs --tail 50 app >&2
+            exit 1
+        fi
+    fi
+    sleep 2
+done
+
+echo "!! Timed out waiting for radiorumble to become healthy" >&2
+docker compose logs --tail 50 app >&2
+exit 1
