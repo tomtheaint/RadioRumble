@@ -557,6 +557,89 @@ async def auth_logout() -> JSONResponse:
     return response
 
 
+# ---------------------------------------------------------------- the games
+
+MODES_TEMPLATE = BASE_DIR / "templates" / "modes.html"
+
+
+@app.get("/modes", response_class=HTMLResponse)
+async def modes_page() -> HTMLResponse:
+    """What the games are. Public -- it explains the contest to spectators."""
+    return HTMLResponse(MODES_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@app.get("/api/modes")
+async def modes_api() -> JSONResponse:
+    """Every game, what it is, how it is won, and what can be tuned.
+
+    Assembled from the mode classes themselves rather than written out here:
+    each one carries its own docstring, objective and OPTIONS, so adding a
+    seventh game makes it appear on the page with no page to edit. The
+    alternative -- a hand-kept list -- had already gone stale twice over, in
+    modes.py's own docstring and in contest.toml, both of which described
+    three of the six.
+    """
+    from radiorumble.modes import MODES
+
+    now = datetime.now(timezone.utc)
+    active = contest.mode_now(now)
+    games = []
+    for key, cls in sorted(MODES.items()):
+        described = cls.describe()
+        described["default"] = key == contest.mode
+        described["active"] = key == active
+        # What this game is *actually* set to right now, so somebody reading
+        # the page knows the difference between the documented default and the
+        # value this contest is using.
+        described["settings"] = {
+            name: contest.mode_settings.get(name, default) if key == contest.mode else default
+            for name, default, _about in cls.OPTIONS
+        }
+        games.append(described)
+
+    bonuses = contest.bonuses
+    return JSONResponse({
+        "games": games,
+        "active": active,
+        "default": contest.mode,
+        # Settings that belong to the contest rather than to any one game.
+        # They apply whichever game is being played, which is exactly why they
+        # are worth separating on the page.
+        "shared": [
+            {"name": "qso_points", "value": contest.qso_points,
+             "about": "Points for one accepted contact."},
+            {"name": "dupe_scope", "value": contest.dupe_scope,
+             "about": "When the same station may be worked again: 'band' "
+                      "(once per band), 'band-mode', or 'contest' (once, ever)."},
+            {"name": "bands", "value": sorted(contest.bands),
+             "about": "Bands that count. A contact on anything else is ignored."},
+            {"name": "modes", "value": sorted(contest.modes),
+             "about": "Transmission modes that count -- FT8 and FT4, not the game."},
+            {"name": "compete_as", "value": contest.compete_as,
+             "about": "'team' for schools, 'operator' for individuals, 'open' "
+                      "for a free-for-all with no roster."},
+            {"name": "match_minutes", "value": contest.match_minutes,
+             "about": "How far apart two logs may place the same contact and "
+                      "still be treated as the same one."},
+        ],
+        "bonuses": {
+            "enabled": bool(getattr(bonuses, "enabled", False)),
+            "items": [
+                {"name": n, "value": getattr(bonuses, n, 0), "about": a}
+                for n, a in (
+                    ("dx", "Extra points for a contact outside the home country."),
+                    ("qrp", "The other station logged low power."),
+                    ("pota_sota", "POTA/SOTA/WWFF/IOTA named in the log."),
+                    ("special_event", "A callsign listed in special_calls."),
+                    ("technician_band", "10m, 6m, 2m, 1.25m or 70cm."),
+                    ("nil_penalty", "Deducted for a contact the other log denies."),
+                )
+                if hasattr(bonuses, n)
+            ],
+        },
+    })
+
+
 # -------------------------------------------------------------- the matches
 
 MATCHES_TEMPLATE = BASE_DIR / "templates" / "matches.html"

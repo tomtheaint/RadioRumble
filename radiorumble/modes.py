@@ -1,20 +1,24 @@
-"""Contest modes — three different games over the same log.
+"""Contest modes — six different games over the same log.
 
 The scoreboard machinery (who is on which team, dupes, the clock, the bands
-that count) is identical in all three. What changes is what a contact is
+that count) is identical in all of them. What changes is what a contact is
 *worth*, and that is all a mode decides:
 
-    classic    points x grid squares. The traditional shape: work more, and
-               work more places.
-    conquest   a map of the United States. Work a station in a state and your
-               school owns it, coloured in your colours until somebody takes
-               it back. Score is territory held.
-    dx         only contacts outside the United States count, and the score is
-               driven by how many countries you reach rather than how many
-               contacts you make.
+    classic    points x grid squares. The traditional shape.
+    conquest   a map of the United States; work a state, own a state.
+    dx         only contacts outside the United States count.
+    scarcity   conquest, where the last states standing are worth the most.
+    connect    territory only counts when it joins territory you hold.
+    traverse   an unbroken chain of states, coast to coast.
 
 A mode never sees the log or the roster. It is handed a QSO that has already
 passed every common rule, and it says what that contact does to a score.
+
+Each class carries its own explanation: the docstring is the description, and
+``objective`` and ``OPTIONS`` say how it is won and what can be tuned. That is
+what /modes renders, so the page cannot drift from the code the way a
+hand-written list of six games immediately would -- this docstring described
+three of them for as long as there were six.
 """
 from __future__ import annotations
 
@@ -34,9 +38,33 @@ class Mode:
     label = "Classic"
     #: What the page should draw beside the standings.
     view = "standings"
+    #: One sentence: how this game is won. The docstring says what it is;
+    #: this says what you are trying to do.
+    objective = "Score the most points."
+    #: (name, default, what it does) for anything settable in contest.toml
+    #: under this mode's own table. Shared knobs like qso_points are not here
+    #: -- they belong to the contest, not to a game.
+    OPTIONS: tuple = ()
 
     def __init__(self, settings: dict | None = None) -> None:
         self.settings = settings or {}
+
+    @classmethod
+    def describe(cls) -> dict:
+        """This game, as data, for the page that explains them all."""
+        import inspect
+
+        text = inspect.getdoc(cls) or ""
+        summary, _, detail = text.partition("\n\n")
+        return {
+            "key": cls.key,
+            "label": cls.label,
+            "view": cls.view,
+            "summary": " ".join(summary.split()),
+            "detail": [" ".join(p.split()) for p in detail.split("\n\n") if p.strip()],
+            "objective": cls.objective,
+            "options": [{"name": n, "default": d, "about": a} for n, d, a in cls.OPTIONS],
+        }
 
     def extra_reject(self, qso: Qso, team, board) -> str | None:
         """A reason this contact does not score in this mode, if any."""
@@ -57,7 +85,18 @@ class Mode:
 
 
 class ClassicMode(Mode):
-    """Points times grid squares."""
+    """Points times grid squares. The traditional contest shape.
+
+    Every accepted contact is worth ``qso_points``, and the total is multiplied
+    by the number of distinct grid squares worked. Two teams making the same
+    number of contacts are separated by how far they spread them: forty
+    contacts into four squares scores a quarter of forty into forty.
+
+    Nothing is drawn but the standings, because nothing here is territorial --
+    the map would only be a picture of where people happened to answer.
+    """
+
+    objective = "Work as many stations as possible, in as many different grid squares as possible."
 
     key = "classic"
     label = "Classic"
@@ -93,6 +132,20 @@ class ConquestMode(Mode):
                claimed it first. States change hands all afternoon, which is
                the version that behaves like a game.
     """
+
+    objective = "Hold more of the map than anybody else when the clock stops."
+    OPTIONS = (
+        ("claim", "first",
+         "Who holds a state. 'first' rewards speed and the map settles once "
+         "it fills; 'most' gives it to whoever has the most contacts into it, "
+         "so states change hands all afternoon."),
+        ("territory", "state",
+         "What a piece of the board is: 'state' (51 pieces) or 'grid' "
+         "(683 squares). Grid is a much longer game."),
+        ("extent", "conus",
+         "'conus' is the lower 48 plus DC (469 grid squares); 'all' includes "
+         "Alaska and Hawaii (683)."),
+    )
 
     key = "conquest"
     label = "Conquest"
@@ -196,6 +249,14 @@ class DxMode(Mode):
     and a team that works twenty countries has twenty.
     """
 
+    objective = "Reach as many different countries as you can."
+    OPTIONS = (
+        ("points_per_dx", 3, "Points for each contact outside the United States."),
+        ("count_domestic", False,
+         "Whether contacts inside the US score at all. Off by default -- with "
+         "it on, domestic contacts count for points but never for countries."),
+    )
+
     key = "dx"
     label = "DX"
     view = "globe"
@@ -271,6 +332,16 @@ class ScarcityMode(ConquestMode):
     ones while they are still awkward, not for having claimed anything at all.
     """
 
+    objective = "Claim the awkward states before anybody else needs to, while they are still cheap to ignore."
+    OPTIONS = (
+        ("base_points", 10, "What the first state claimed is worth."),
+        ("step_points", 5,
+         "How much every remaining state gains each time one is taken. The "
+         "last one standing is worth the most."),
+        ("territory", "state", "'state' or 'grid', as in conquest."),
+        ("extent", "conus", "'conus' or 'all', as in conquest."),
+    )
+
     key = "scarcity"
     label = "Scarcity"
     view = "usmap"
@@ -342,6 +413,13 @@ class ConnectMode(ConquestMode):
     ``target`` wins it outright; the scoreboard says who got there first.
     """
 
+    objective = "Build the longest unbroken chain of neighbouring states -- reach the target and win outright."
+    OPTIONS = (
+        ("target", 4, "Chain length that wins it outright."),
+        ("claim", "first", "Who holds a state, as in conquest."),
+        ("extent", "conus", "'conus' or 'all', as in conquest."),
+    )
+
     key = "connect"
     label = "Connect"
     view = "usmap"
@@ -400,6 +478,16 @@ class TraverseMode(ConquestMode):
     States only. Where a crossing starts and stops is declared per side in
     static/adjacency.json, and a grid-square board has no coasts.
     """
+
+    objective = "Chain states all the way across the country, coast to coast."
+    OPTIONS = (
+        ("axis", "east-west",
+         "'east-west' crosses Pacific to Atlantic (seven states at the "
+         "shortest); 'north-south' runs the Canadian border to the Gulf "
+         "(three)."),
+        ("crossing_points", 1000, "Awarded to whoever completes a crossing."),
+        ("claim", "first", "Who holds a state, as in conquest."),
+    )
 
     key = "traverse"
     label = "Traverse"

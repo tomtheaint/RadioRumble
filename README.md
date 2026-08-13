@@ -337,6 +337,7 @@ There are two, and they are one click apart:
 | **[`/listener`](http://localhost:7373/listener)** | Start and stop the WSJT-X listener, and see what it has heard |
 | **[`/admin`](http://localhost:7373/admin)** | Review the log: every contact, its status, and voiding |
 | **[`/matches`](http://localhost:7373/matches)** | The schedule: what is on, what is next, and adding one |
+| **[`/modes`](http://localhost:7373/modes)** | The games: what each one is, how it is won, and every setting |
 
 One password covers all three. Sign in on any of them and the rest follow —
 the session is a cookie, so it travels with the browser rather than with the
@@ -665,6 +666,7 @@ built from `location.pathname` for the same reason, and falls back to polling
 | `/api/contacts` | Every contact with its status. Needs signing in |
 | `/api/contacts/{uid}/void` · `/restore` | Strike one out, or put it back |
 | `/matches` · `/api/matches` | The schedule. Public to read; signing in to change |
+| `/modes` · `/api/modes` | Every game, its objective and its settings. Public |
 | `/api/auth` · `/setup` · `/login` · `/logout` | Claim the instance, sign in, sign out |
 
 Reading is incremental — each byte of each log is parsed once — but what is
