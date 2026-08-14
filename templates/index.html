@@ -169,7 +169,7 @@
 <div class="wrap">
 
   <header>
-    <h1 id="title">📻 Radio Rumble</h1>
+    <h1 id="title">Radio Rumble</h1>
     <span class="pill mode" id="mode-pill">—</span>
     <span class="pill" id="status"><span class="dot"></span><span id="status-text">connecting</span></span>
     <div class="clock">
@@ -896,7 +896,7 @@
   function apply(snapshot) {
     state = snapshot;
     clockBase = { remaining: snapshot.contest.seconds_remaining, at: Date.now() };
-    document.getElementById("title").textContent = "📻 " + snapshot.contest.name;
+    document.getElementById("title").textContent = snapshot.contest.name;
     document.getElementById("mode-pill").textContent = snapshot.contest.mode_label || snapshot.contest.mode;
     document.title = snapshot.contest.name + " — Live Scoreboard";
 
